@@ -1,7 +1,6 @@
 #!/bin/bash
 # GO2. Starts Odin-Nav-Stack2 (ONS2) in its own container "ons2-go2" (ROS1 inside; host ROS2 Humble untouched).
 # Needs: start_odin_remote.sh (ROS master) here + start_odin_agx.sh go2 on the AGX (Odin1, relocalized).
-# The ONS1 navigation (odin-nav-0144) is stopped first: both stacks cannot run at once.
 #   ~/ons2_docker/ons2_start.sh --map=<map_name> [other ons2 options]      stop: ~/ons2_docker/ons2_stop.sh
 #   Console:  docker exec -it ons2-go2 tmux attach -t ons2_go2      (Ctrl+b then n/p = next/prev window, Ctrl+b d = leave)
 # --with-bridge : THEIR Go2 bridge (unitree_control): the robot STANDS UP at start and walks on /cmd_vel. Remote in hand!
@@ -16,12 +15,10 @@ for a in "$@"; do
 done
 printf '%s\n' "${ARGS[@]}" | grep -q '^--map=' || { echo "Usage: $0 --map=<map_name> [--with-yolo-agx] [--with-bridge]"; exit 1; }
 if [ $BRIDGE = 1 ]; then
-  ps -eo cmd | grep -q "[g]w_go2.py" && { echo "Our gateway is running: stop it first (gateway.sh stop)"; exit 1; }
   echo "WITH THEIR BRIDGE: the Go2 will STAND UP in ~30 s and walk when a mission is sent. Remote in hand. Ctrl+C to abort (5 s)"
   sleep 5
 fi
 docker ps --format "{{.Names}}" | grep -qx odin-master || { echo "First run: ~/odin_nav_stack/drv0144/start_odin_remote.sh"; exit 1; }
-docker stop odin-nav-0144 >/dev/null 2>&1 && echo "ONS1 navigation stopped (back to ONS1: ons2_stop.sh, then start_nav_remote.sh)"
 docker rm -f ons2-go2 >/dev/null 2>&1
 docker run -d --name ons2-go2 --network host \
   -e ROS_MASTER_URI=http://${GO2_IP}:11311 -e ROS_IP=${GO2_IP} -e ROS_HOSTNAME=${GO2_IP} \

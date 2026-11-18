@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AGX ORIN, Odin-perception venv. OUR helper (not upstream): keeps Florence-2 LOADED (their API: make_backend +
 # InspectionPipeline.run_items) and answers on http://127.0.0.1:8740 so Foxglove can ask it something in ~1-3 s
-# instead of reloading the model (~10 s) per inspect.sh run.
+# instead of reloading the model (~10 s) per check run.
 #
 # Commands (GET /run?q=...), sent from Foxglove on /florence/command:
 #   chair                 -> NUMBERED detection: every chair gets a name and number ("chair 1", "chair 2" ...),

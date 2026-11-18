@@ -2,7 +2,7 @@
 
 This branch adapts **Odin Navigation Stack 2 (ONS2)** to a Unitree Go2 where the Odin1 sensor and the
 perception models run on an external **NVIDIA Jetson AGX Orin**, while navigation runs on the Go2's own computer.
-It adds a GPU object detector, open-vocabulary search with Florence-2, "go to" / "follow" commands from Foxglove,
+It adds a GPU object detector (YOLOv5l with TensorRT), open-vocabulary search with Florence-2, "go to" / "follow" commands from Foxglove,
 extra safety limits for walking among people, and automatic recovery of the sensor pipeline.
 
 Everything upstream keeps working: the changes are a new robot profile, new scripts and launch files, and one
@@ -17,7 +17,7 @@ flowchart LR
   subgraph AGX["Jetson AGX Orin"]
     O1["Odin1 driver<br/>(USB 3)"]
     D["pcd2depth<br/>(depth image)"]
-    Y["YOLOv5l on GPU<br/>(detector)"]
+    Y["YOLOv5l on GPU<br/>(TensorRT FP16)"]
     F["Florence-2 on GPU<br/>(open-vocabulary search)"]
     W["watchdog + autostart"]
   end
@@ -36,7 +36,7 @@ flowchart LR
 
 | Machine | Runs |
 |---|---|
-| **Jetson AGX Orin** | Odin1 driver (the color camera needs USB 3), depth image, YOLOv5l detector on the GPU, Florence-2, watchdog and autostart services |
+| **Jetson AGX Orin** | Odin1 driver (the color camera needs USB 3), depth image, YOLOv5l detector on the GPU (TensorRT), Florence-2, watchdog and autostart services |
 | **Go2 computer** | ROS 1 master, ONS2 (in its own container, host ROS 2 untouched), command bridge, optional chassis bridge, Foxglove bridge |
 | **Laptop** | Foxglove layout with command panels and STOP / RESET buttons |
 
@@ -126,8 +126,9 @@ map, so they can be used by `go F#`.
 | Path | Contents |
 |---|---|
 | `go2/` | `ons2_start.sh` / `ons2_stop.sh` (ONS2 container `ons2-go2`), `Dockerfile` (image `ons2:go2`), `start_odin_remote.sh` / `stop_odin_remote.sh` (ROS 1 master + ROS 1 ↔ ROS 2 bridge), `fastdds_udp.xml`, `remote_monitor_start.sh` (upstream web monitor on the Go2 host) |
-| `agx/` | `start_odin_agx.sh` / `stop_odin_agx.sh` (Odin1 driver), `start_depth_agx.sh`, `start_yolo_gpu_agx.sh` / `stop_yolo_gpu_agx.sh`, `start_perception_agx.sh` (Florence-2), `florence_service.py`, `florence_cmd_relay.py`, `cam_stream.py` (MJPEG camera view), `fix_odin_usb.sh`, `control_command_agx.yaml`, `odin_depth.launch` |
+| `agx/` | `start_odin_agx.sh` / `stop_odin_agx.sh` (Odin1 driver), `start_depth_agx.sh`, `start_yolo_gpu_agx.sh` / `stop_yolo_gpu_agx.sh`, `start_perception_agx.sh` (Florence-2), `florence_service.py`, `florence_cmd_relay.py`, `cam_stream.py` (MJPEG camera view), `fix_odin_usb.sh`, `control_command_agx.yaml`, `odin_depth.launch`, `checklist.example.yaml` (for the Florence command `all`) |
 | `agx/yolo_gpu/` | `yolo_gpu_service.py` (YOLOv5l on the GPU, HTTP on 127.0.0.1), `yolo_detector_gpu.py` (ROS node, same topics as upstream `yolo_detector`), `yolo5_stubs.py` |
+| `agx/yolo_trt/` | `export_onnx.py` (YOLOv5l → ONNX), `yolo_trt_service.py` (same HTTP API as `yolo_gpu_service.py`, TensorRT engine), `compare.py` (PyTorch vs TensorRT on the same images) |
 | `agx/system/` | `odin_watchdog.sh`, `odin_autostart.sh`, `odin_usb_tuning.sh`, their systemd units and the udev rule |
 | `agx/docker/` | `Dockerfile.driver` (image `odin-drv:0144`), `Dockerfile.yolo` (image `odin-yolo:0144`) |
 | `foxglove/` | Layout with 3D view, camera / YOLO / Florence images, command panels and STOP / RESET buttons |
@@ -137,6 +138,12 @@ map, so they can be used by `go F#`.
 hub if needed), and relaunches the depth, YOLO and Florence containers if they crash or lose the ROS master.
 **Autostart (AGX):** at boot, waits for the Odin1, the Ethernet link and the ROS master, then starts everything in
 order with retries.
+
+**YOLO on TensorRT (AGX):** `start_yolo_gpu_agx.sh` serves YOLOv5l from a TensorRT FP16 engine when it exists, and
+falls back to the PyTorch service by itself if the engine is missing or does not load. Measured on the AGX in the
+30 W power mode, with Florence-2 sharing the GPU: about 45–50 ms per image instead of 300–430 ms, so the detector
+keeps up with the camera (~10 Hz, ~0.15 s latency, before ~4 Hz and ~0.3 s), with the same detections
+(47 of 47 on the test images, confidence within ±0.01).
 
 ---
 
@@ -161,6 +168,23 @@ The scripts expect these locations (they can be changed inside the scripts).
 5. A static address (`AGX_IP`) on the Ethernet port to the Go2 (NetworkManager profile `go2-net`) and the network file (§8).
 6. Optional services: `agx/system/*.sh` in `/usr/local/bin/`, `*.service` in `/etc/systemd/system/`, the udev rule
    in `/etc/udev/rules.d/`, then `systemctl enable odin-usb-tuning odin-watchdog odin-autostart`.
+7. Optional Florence-2 checklist: `agx/checklist.example.yaml` as `~/perception_test/checklist.yaml`.
+8. TensorRT engine (optional but recommended; about 15 minutes of GPU, with the robot idle), in `~/odin_test/yolo_trt`:
+   ```bash
+   ~/odin-perception/.venv/bin/python export_onnx.py
+   /usr/src/tensorrt/bin/trtexec --onnx=yolov5l.onnx --saveEngine=yolov5l_fp16.engine --fp16 \
+     --minShapes=images:1x3x256x256 --optShapes=images:1x3x544x640 --maxShapes=images:1x3x640x640 \
+     --memPoolSize=workspace:2048
+   ```
+   To compare it with the PyTorch service first, run it on port 8751
+   (`YOLO_GPU_PORT=8751 ~/odin-perception/.venv/bin/python yolo_trt_service.py`) and then `compare.py`.
+   Rebuild the engine after a JetPack / TensorRT update; until then the PyTorch fallback is used.
+
+**Both machines**
+- Keep the clocks of the Go2 and the AGX synchronized (NTP, e.g. systemd-timesyncd with a short poll interval):
+  ROS combines time stamps from both machines, and an offset moves objects to the wrong place on the map.
+- AGX Ethernet profile to the Go2, for example:
+  `nmcli con add type ethernet ifname eno1 con-name go2-net ipv4.method manual ipv4.addresses <AGX_IP>/24 ipv4.never-default yes`
 
 ---
 
@@ -194,6 +218,8 @@ computer and the AGX, with the same values. The scripts stop with a message whil
 |---|---|---|
 | `ODIN_USER` | user with UID 1000 | AGX user that owns `~/odin_test` (watchdog / autostart run as root) |
 | `YOLO_WEIGHTS` | see `yolo_gpu_service.py` | YOLOv5 weights file |
+| `YOLO_BACKEND` | `tensorrt` | `pytorch` forces the PyTorch service |
+| `YOLO_TRT_ENGINE` | `~/odin_test/yolo_trt/yolov5l_fp16.engine` | TensorRT engine file |
 | `FLORENCE_CHECKLIST` | `~/perception_test/checklist.yaml` | List used by the Florence command `all` |
 | `ONS2_MAP_PCD` | `~/ons2/ros_ws/src/map_planner/maps/map.pcd` | Point cloud shown by `cloud_view.py` |
 | `GO2_LOG_DIR` | `~/ons2/logs` | Logs, including the follow log |
@@ -202,7 +228,8 @@ computer and the AGX, with the same values. The scripts stop with a message whil
 
 ## 9. Not included in this repository
 
-- **Model weights** (YOLOv5, Florence-2): download them from their official sources.
+- **Model weights** (YOLOv5, Florence-2): download them from their official sources. The ONNX file and the TensorRT
+  engine are generated on the AGX (§6) and are specific to its TensorRT version.
 - **Maps and missions** (point clouds, occupancy grids, relocalization maps, waypoint files): they are specific to
   each site; create your own with the upstream map tutorial.
 - **Logs** generated at run time.
@@ -215,8 +242,8 @@ computer and the AGX, with the same values. The scripts stop with a message whil
 
 - The Odin1 USB 3 link is sensitive to cable quality and strain; the watchdog recovers from drops but a short,
   well-secured cable is required.
-- YOLOv5l runs at about 4 Hz end to end on the camera stream; detection of small or partially hidden objects from
-  the robot's low viewpoint is limited.
+- With TensorRT the detector keeps up with the camera (~10 Hz); with the PyTorch fallback it runs at about 4 Hz.
+  Detection of small or partially hidden objects from the robot's low viewpoint is limited.
 - Florence-2 *base* finds and describes objects but does not answer free-form questions.
 
 ---
@@ -241,3 +268,4 @@ Third-party components, used but not included here (each keeps its own license):
 | [Odin-perception](https://github.com/ManifoldTechLtd/Odin-perception) | Apache-2.0 (see its `NOTICE`) | installed separately; `patches/` holds a small fix for it |
 | [Florence-2](https://huggingface.co/microsoft/Florence-2-base-ft) | MIT | model weights, downloaded separately |
 | [Unitree SDK2](https://github.com/unitreerobotics/unitree_sdk2) | BSD-3-Clause | downloaded when building `go2/Dockerfile` |
+| [TensorRT](https://developer.nvidia.com/tensorrt) | NVIDIA proprietary, part of JetPack | used through the JetPack installation; not included |

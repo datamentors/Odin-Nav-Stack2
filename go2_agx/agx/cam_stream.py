@@ -3,7 +3,7 @@
 # the original JPEG frames (1600x1296, full quality, no re-encoding), straight to the laptop over Wi-Fi.
 # ROS 2 / DDS over Wi-Fi loses the ~0.7 MB images (tested 9 Nov: 0.1 fps); TCP does not.
 #   http://<AGX>:8080/            page with the live image (any browser)
-#   http://<AGX>:8080/stream.mjpg MJPEG stream (view_camera.sh on the laptop)
+#   http://<AGX>:8080/stream.mjpg MJPEG stream (open it in a browser)
 #   http://<AGX>:8080/snapshot.jpg last frame
 import threading, time, rospy
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler

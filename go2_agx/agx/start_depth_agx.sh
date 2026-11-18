@@ -1,12 +1,11 @@
 #!/bin/bash
 # AGX ORIN. Depth image /odin1/depth_img_competetion for the ONS2 yolo_ros (their driver launch odin1_ros1.launch starts
 # pcd2depth_node next to the driver; our AGX driver uses odin1_headless.launch, so it runs here in its own container).
-# Not needed with our own YOLO (start_yolo_agx.sh starts its own pcd2depth). Stop: docker rm -f odin-depth
+# Stop: docker rm -f odin-depth
 CONF="${GO2_AGX_CONF:-$HOME/.config/go2_agx/network.env}"; [ -f "$CONF" ] && . "$CONF"   # see go2_agx/network.env.example
 : "${GO2_IP:?set GO2_IP (Go2 wired address, runs the ROS master) in $CONF}"
 : "${AGX_IP:?set AGX_IP (AGX address on the cable to the Go2) in $CONF}"
 docker ps --format "{{.Names}}" | grep -qx odin-agx || { echo "First run: ~/odin_test/start_odin_agx.sh go2"; exit 1; }
-docker ps --format "{{.Names}}" | grep -qx odin-yolo && { echo "Our YOLO (odin-yolo) is running and already publishes depth"; exit 1; }
 D=$HOME/odin_test; mkdir -p $D/yolo
 docker exec odin-agx cat /root/.ros/odin_ros_driver/calib.yaml > $D/yolo/calib.yaml 2>/dev/null
 docker rm -f odin-depth >/dev/null 2>&1

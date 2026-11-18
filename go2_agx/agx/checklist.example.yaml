@@ -1,0 +1,47 @@
+# Example checklist for the Florence-2 command "all" (Odin-perception task format, see its configs/tasks/).
+# Copy to ~/perception_test/checklist.yaml on the AGX (or point FLORENCE_CHECKLIST to it) and adapt the targets:
+# target = what to look for, in English (any phrase).
+version: 1
+defaults:
+  severity: normal
+items:
+  - id: chairs_count
+    name: Visible chairs
+    kind: count
+    question: How many chairs are visible
+    rule:
+      op: count
+      target: chair
+      mode: ovd
+      max_area_frac: 0.9
+  - id: tables_count
+    name: Visible tables
+    kind: count
+    question: How many tables are visible
+    rule:
+      op: count
+      target: table
+      mode: ovd
+      max_area_frac: 0.9
+  - id: person_present
+    name: Is there a person
+    kind: yes_no
+    question: Is there a person
+    expect: "no"
+    rule:
+      op: presence
+      target: person
+      mode: ovd
+      max_area_frac: 0.9
+      min_count: 1
+  - id: extinguisher_present
+    name: Is there a fire extinguisher
+    kind: yes_no
+    question: Is there a fire extinguisher
+    expect: "yes"
+    rule:
+      op: presence
+      target: fire extinguisher
+      mode: ovd
+      max_area_frac: 0.9
+      min_count: 1

@@ -2,7 +2,7 @@
 # AGX ORIN. ONS2 Odin-perception (Florence-2), step 3 of its README: the ROS 1 frame server (port 8730) that reads
 # /odin1/image/undistorted and republishes annotated frames on /inspection/annotated/compressed (see it in Foxglove).
 # ROS 1 only exists inside containers here, so it runs in container "odin-perception-cap" (image odin-yolo:0144).
-# Needs start_odin_agx.sh go2 first.  Then run checks with ~/odin_test/inspect.sh [tasks.yaml]
+# Needs start_odin_agx.sh go2 first. Then send commands on /florence/command (e.g. from Foxglove).
 #   stop: docker rm -f odin-perception-cap
 CONF="${GO2_AGX_CONF:-$HOME/.config/go2_agx/network.env}"; [ -f "$CONF" ] && . "$CONF"   # see go2_agx/network.env.example
 : "${GO2_IP:?set GO2_IP (Go2 wired address, runs the ROS master) in $CONF}"
@@ -16,7 +16,7 @@ ok=0; for i in $(seq 1 15); do sleep 2; curl -sf -m 2 http://127.0.0.1:8730/meta
 [ $ok = 1 ] || { echo "No frames yet: docker logs odin-perception-cap"; exit 1; }
 echo "OK: frame server ready (http://127.0.0.1:8730, 10 fps)"
 # Foxglove control (our helpers): Florence-2 kept loaded on the GPU (127.0.0.1:8740) + ROS relay /florence/command -> /florence/result
-pkill -f "[f]lorence_service.py" 2>/dev/null; sleep 1
+pkill -f "[f]lorence_service.py" 2>/dev/null; sleep 1; mkdir -p $HOME/perception_test
 setsid nohup $HOME/odin-perception/.venv/bin/python $HOME/odin_test/florence_service.py > $HOME/perception_test/florence_service.log 2>&1 < /dev/null &
 docker rm -f odin-perception-cmd >/dev/null 2>&1
 docker run -d --name odin-perception-cmd --network host -e ROS_MASTER_URI=http://${GO2_IP}:11311 -e ROS_IP=${AGX_IP} \

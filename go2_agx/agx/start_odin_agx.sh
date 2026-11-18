@@ -63,5 +63,5 @@ for i in $(seq 1 40); do
 done
 # Color camera for the laptop over Wi-Fi (MJPEG over HTTP, full resolution): http://<AGX Wi-Fi IP>:8080/
 docker cp $D/cam_stream.py odin-agx:/cam_stream.py && docker exec -d odin-agx bash -c "source /opt/ros/noetic/setup.bash; exec /usr/bin/python3 /cam_stream.py > /tmp/cam_stream.log 2>&1"
-echo "Camera stream: http://$(ip -4 -br addr show wlP1p1s0 | awk "{print \$3}" | cut -d/ -f1):8080/  (view_camera.sh on the laptop)"
+echo "Camera stream: http://$(ip -4 -br addr show wlP1p1s0 | awk "{print \$3}" | cut -d/ -f1):8080/  (open it in a browser)"
 echo "$LOG" | grep -q "relocalization success" || echo "WARNING: not relocalized yet (the Odin1 must be inside the mapped area; moving it gently helps)"
