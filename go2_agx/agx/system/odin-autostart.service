@@ -1,0 +1,13 @@
+[Unit]
+Description=Odin1 + perception autostart at boot (driver, depth, Florence-2)
+After=docker.service network-online.target odin-usb-tuning.service
+Wants=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/odin_autostart.sh
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=multi-user.target

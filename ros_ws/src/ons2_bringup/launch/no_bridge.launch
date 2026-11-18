@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!-- OUR addition (not ONS2 upstream): empty chassis bridge for tests where nothing must move the legs.
+     Used by scripts/ons2_go2_agx.sh when ONS2_BRIDGE is not 1. (An empty bridge_pkg:= on the command line does NOT
+     work: roslaunch then falls back to the default unitree_control, which stands the robot up.) -->
+<launch>
+  <arg name="cmd_vel_topic" default="/cmd_vel"/>
+</launch>

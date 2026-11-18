@@ -1,0 +1,20 @@
+Patch for odin_ros_driver v0.14.4 (Manifold Tech, Apache-2.0), file include/host_sdk_sample.h.
+Adds the optional switch ODIN_NO_RAW_RGB=1 (publish only the compressed color image).
+Apply inside ros_ws/src/odin_ros_driver with:  patch -p1 < <this file>
+
+--- a/include/host_sdk_sample.h
++++ b/include/host_sdk_sample.h
+@@ -903,8 +903,11 @@
+     }
+     #else
+     {
+-        rgb_pub_.publish(cv_image.toImageMsg());
+-        if (m_undistort_map_init_success) {
++        // AGX patch (9 Nov): ODIN_NO_RAW_RGB=1 -> publish only the compressed image (the raw ones are ~60 MB/s each
++        // and the ros1_bridge on the Go2 would pull them over the network)
++        static const bool no_raw_rgb = getenv("ODIN_NO_RAW_RGB") != nullptr;
++        if (!no_raw_rgb) rgb_pub_.publish(cv_image.toImageMsg());
++        if (!no_raw_rgb && m_undistort_map_init_success) {
+             undistort_rgb_pub_.publish(cv_undistorted_image.toImageMsg());
+         }
+ 

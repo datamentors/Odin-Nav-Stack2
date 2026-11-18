@@ -1,0 +1,20 @@
+# Image odin-drv:0144 - Odin1 driver 0.14.4 only (ROS 1 Noetic), slim image for the AGX Orin.
+# Build from the REPOSITORY ROOT (needs the submodule ros_ws/src/odin_ros_driver):
+#   git submodule update --init ros_ws/src/odin_ros_driver
+#   docker build -f go2_agx/agx/docker/Dockerfile.driver -t odin-drv:0144 .
+FROM ros:noetic-ros-base
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential cmake pkg-config libusb-1.0-0-dev libssl-dev libyaml-cpp-dev libeigen3-dev \
+      libopencv-dev libpcl-dev ros-noetic-cv-bridge ros-noetic-image-transport ros-noetic-pcl-ros \
+      ros-noetic-pcl-conversions ros-noetic-tf ros-noetic-tf2-ros ros-noetic-message-filters \
+      ros-noetic-visualization-msgs ros-noetic-compressed-image-transport python3-numpy \
+      ros-noetic-tf2-geometry-msgs ros-noetic-tf2-eigen ros-noetic-geometry-msgs ros-noetic-rosbag usbutils \
+    && rm -rf /var/lib/apt/lists/*
+COPY ros_ws/src/odin_ros_driver /opt/odin/ros_ws/src/odin_ros_driver
+# optional switch ODIN_NO_RAW_RGB=1: publish only the compressed color image (see go2_agx/patches/)
+COPY go2_agx/patches/odin_ros_driver-optional-no-raw-rgb.patch /tmp/no_raw_rgb.patch
+RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/* \
+ && cd /opt/odin/ros_ws/src/odin_ros_driver && patch -p1 < /tmp/no_raw_rgb.patch
+RUN cp /opt/odin/ros_ws/src/odin_ros_driver/package_ros1.xml /opt/odin/ros_ws/src/odin_ros_driver/package.xml \
+ && bash -c "source /opt/ros/noetic/setup.bash && cd /opt/odin/ros_ws && \
+      catkin_make_isolated --merge --cmake-args -DCMAKE_BUILD_TYPE=Release -DPYTHON_EXECUTABLE=/usr/bin/python3 -DBUILD_SYSTEM=ROS1"

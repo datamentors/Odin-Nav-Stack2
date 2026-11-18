@@ -1,0 +1,637 @@
+{
+  "configById": {
+    "3D!ons2map": {
+      "cameraState": {
+        "distance": 24,
+        "perspective": true,
+        "phi": 8,
+        "thetaOffset": 0,
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-position",
+      "followTf": "base_link",
+      "scene": {
+        "enableStats": false,
+        "transforms": {
+          "showLabel": true,
+          "axisScale": 1.5,
+          "labelSize": 0.25
+        }
+      },
+      "transforms": {
+        "frame:odom": {
+          "visible": false
+        },
+        "frame:imu": {
+          "visible": false
+        },
+        "frame:lidar": {
+          "visible": false
+        },
+        "frame:camera_0": {
+          "visible": false
+        },
+        "frame:odin1_lidar_link": {
+          "visible": false
+        },
+        "frame:odin1_camera_link": {
+          "visible": false
+        },
+        "frame:odin1_camera_cv_link": {
+          "visible": false
+        },
+        "frame:lidar_link": {
+          "visible": false
+        },
+        "frame:camera_link": {
+          "visible": false
+        },
+        "frame:odin1_base_link": {
+          "visible": false
+        },
+        "frame:base_link": {
+          "visible": true
+        }
+      },
+      "topics": {
+        "/map": {
+          "visible": false
+        },
+        "/inflated_map": {
+          "visible": false,
+          "colorMode": "costmap",
+          "alpha": 0.4
+        },
+        "/initial_path": {
+          "visible": true,
+          "lineWidth": 0.06,
+          "gradient": [
+            "#00e676ff",
+            "#00e676ff"
+          ]
+        },
+        "/scan_360": {
+          "visible": true,
+          "pointSize": 4,
+          "colorMode": "flat",
+          "flatColor": "#ff1744ff"
+        },
+        "/scan": {
+          "visible": false
+        },
+        "/odin1/cloud_slam": {
+          "visible": false
+        },
+        "/odin1/odometry": {
+          "visible": true
+        },
+        "/robot_marker": {
+          "visible": true
+        },
+        "/object_markers": {
+          "visible": true
+        },
+        "/navigation_goal_marker": {
+          "visible": true
+        },
+        "/go2_body_marker": {
+          "visible": true
+        },
+        "/map_view": {
+          "visible": true,
+          "colorMode": "map",
+          "alpha": 1.0
+        }
+      },
+      "layers": {
+        "grid": {
+          "visible": true,
+          "frameLocked": true,
+          "label": "Grid",
+          "instanceId": "grid",
+          "layerId": "foxglove.Grid",
+          "size": 20,
+          "divisions": 20,
+          "lineWidth": 0.5,
+          "color": "#24822655",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "publish": {
+        "type": "pose",
+        "poseTopic": "/waypoint_pick",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26
+      },
+      "imageMode": {}
+    },
+    "Image!ons2cam": {
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26
+      },
+      "imageMode": {
+        "imageTopic": "/odin1/image/compressed"
+      }
+    },
+    "RawMessages!ons2status": {
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "topicPath": "/waypoint_manager/status",
+      "fontSize": 12
+    },
+    "Plot!ons2cmd": {
+      "paths": [
+        {
+          "value": "/cmd_vel.linear.x",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "avance m/s"
+        },
+        {
+          "value": "/cmd_vel.angular.z",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "giro rad/s"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240,
+      "followingViewWidth": 30
+    },
+    "Image!ons2insp": {
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26
+      },
+      "imageMode": {
+        "imageTopic": "/inspection/annotated/compressed"
+      }
+    },
+    "Image!ons2yolo": {
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26
+      },
+      "imageMode": {
+        "imageTopic": "/yolo_debug_image/compressed"
+      }
+    },
+    "3D!ons2cloud": {
+      "cameraState": {
+        "distance": 18,
+        "perspective": true,
+        "phi": 55,
+        "thetaOffset": 30,
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-position",
+      "followTf": "base_link",
+      "scene": {
+        "enableStats": false,
+        "transforms": {
+          "showLabel": true,
+          "axisScale": 1.5,
+          "labelSize": 0.25
+        }
+      },
+      "transforms": {
+        "frame:odom": {
+          "visible": false
+        },
+        "frame:imu": {
+          "visible": false
+        },
+        "frame:lidar": {
+          "visible": false
+        },
+        "frame:camera_0": {
+          "visible": false
+        },
+        "frame:odin1_lidar_link": {
+          "visible": false
+        },
+        "frame:odin1_camera_link": {
+          "visible": false
+        },
+        "frame:odin1_camera_cv_link": {
+          "visible": false
+        },
+        "frame:lidar_link": {
+          "visible": false
+        },
+        "frame:camera_link": {
+          "visible": false
+        },
+        "frame:odin1_base_link": {
+          "visible": false
+        },
+        "frame:base_link": {
+          "visible": true
+        }
+      },
+      "topics": {
+        "/map": {
+          "visible": false
+        },
+        "/inflated_map": {
+          "visible": false
+        },
+        "/initial_path": {
+          "visible": false
+        },
+        "/scan_360": {
+          "visible": false
+        },
+        "/scan": {
+          "visible": false
+        },
+        "/odin1/cloud_slam": {
+          "visible": false
+        },
+        "/odin1/odometry": {
+          "visible": false
+        },
+        "/robot_marker": {
+          "visible": false
+        },
+        "/object_markers": {
+          "visible": false
+        },
+        "/navigation_goal_marker": {
+          "visible": false
+        },
+        "/go2_body_marker": {
+          "visible": true
+        },
+        "/map_cloud": {
+          "visible": true,
+          "pointSize": 2,
+          "colorMode": "colormap",
+          "colorMap": "turbo",
+          "colorField": "z"
+        },
+        "/odin1/cloud_slam_lite": {
+          "visible": true,
+          "pointSize": 3,
+          "colorMode": "rgb",
+          "colorField": "rgb"
+        }
+      },
+      "layers": {
+        "grid": {
+          "visible": true,
+          "frameLocked": true,
+          "label": "Grid",
+          "instanceId": "grid",
+          "layerId": "foxglove.Grid",
+          "size": 30,
+          "divisions": 30,
+          "lineWidth": 0.5,
+          "color": "#7f7f7f66",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "publish": {
+        "type": "pose",
+        "poseTopic": "/waypoint_pick",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26
+      },
+      "imageMode": {}
+    },
+    "Publish!yolocmd": {
+      "topicName": "/yolo/command",
+      "datatype": "std_msgs/String",
+      "buttonText": "Send to YOLO",
+      "buttonTooltip": "list | chair | move to the front of the chair | move to the left of the 2nd person",
+      "buttonColor": "#1565c0",
+      "advancedView": true,
+      "value": "{\n  \"data\": \"list\"\n}"
+    },
+    "Publish!florencecmd": {
+      "topicName": "/florence/command",
+      "datatype": "std_msgs/String",
+      "buttonText": "Ask Florence-2",
+      "buttonTooltip": "chair | cup | dirty plate | person | all (full list)",
+      "buttonColor": "#6a1b9a",
+      "advancedView": true,
+      "value": "{\n  \"data\": \"chair\"\n}"
+    },
+    "RawMessages!yoloconsole": {
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "topicPath": "/yolo/console.data",
+      "fontSize": 12
+    },
+    "RawMessages!florenceresult": {
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "topicPath": "/florence/result.data",
+      "fontSize": 12
+    },
+    "Publish!yoloconf": {
+      "topicName": "/yolo/set_conf",
+      "datatype": "std_msgs/Float32",
+      "buttonText": "Set YOLO confidence",
+      "buttonColor": "#00838f",
+      "buttonTooltip": "0.25 = their default (25 %). Example: 0.5 = only detections >= 50 %",
+      "advancedView": true,
+      "value": "{\n  \"data\": 0.25\n}"
+    },
+    "Publish!yologo": {
+      "topicName": "/yolo/command",
+      "datatype": "std_msgs/String",
+      "buttonText": "Go to #",
+      "buttonColor": "#2e7d32",
+      "buttonTooltip": "Walk to object number N of the last 'list' (stops 0.8 m in front)",
+      "advancedView": true,
+      "value": "{\n  \"data\": \"go 1\"\n}"
+    },
+    "Publish!yolofollow": {
+      "topicName": "/yolo/command",
+      "datatype": "std_msgs/String",
+      "buttonText": "Follow #",
+      "buttonColor": "#ef6c00",
+      "buttonTooltip": "Follow object number N: walks when the person is > ~1.4 m away, stops ~1.2 m from them, turns to face them, never backwards",
+      "advancedView": true,
+      "value": "{\n  \"data\": \"follow 1\"\n}"
+    },
+    "Publish!yolostop": {
+      "topicName": "/yolo/command",
+      "datatype": "std_msgs/String",
+      "buttonText": "STOP",
+      "buttonColor": "#c62828",
+      "buttonTooltip": "Stop everything that moves the robot: follow, follow mode, mission, NeuPAN (keeps lists)",
+      "advancedView": true,
+      "value": "{\n  \"data\": \"stop\"\n}"
+    },
+    "Publish!yoloreset": {
+      "topicName": "/yolo/command",
+      "datatype": "std_msgs/String",
+      "buttonText": "RESET",
+      "buttonColor": "#4a148c",
+      "buttonTooltip": "Stop everything AND wipe the old route, list numbers and Florence F# objects (clean start)",
+      "advancedView": false,
+      "value": "{\n  \"data\": \"reset\"\n}"
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "first": {
+      "first": "3D!ons2map",
+      "second": "3D!ons2cloud",
+      "direction": "column",
+      "splitPercentage": 55
+    },
+    "second": {
+      "first": {
+        "first": "Image!ons2cam",
+        "second": {
+          "first": "Image!ons2yolo",
+          "second": "Image!ons2insp",
+          "direction": "row",
+          "splitPercentage": 50
+        },
+        "direction": "row",
+        "splitPercentage": 33
+      },
+      "second": {
+        "first": {
+          "first": {
+            "first": {
+              "first": {
+                "first": "Publish!yolocmd",
+                "second": "Publish!yoloconf",
+                "direction": "row",
+                "splitPercentage": 60
+              },
+              "second": {
+                "first": "Publish!yologo",
+                "second": {
+                  "first": "Publish!yolofollow",
+                  "second": {
+                    "direction": "row",
+                    "first": "Publish!yolostop",
+                    "second": "Publish!yoloreset",
+                    "splitPercentage": 50
+                  },
+                  "direction": "row",
+                  "splitPercentage": 50
+                },
+                "direction": "row",
+                "splitPercentage": 33
+              },
+              "direction": "column",
+              "splitPercentage": 50
+            },
+            "second": "RawMessages!yoloconsole",
+            "direction": "column",
+            "splitPercentage": 55
+          },
+          "second": {
+            "first": "Publish!florencecmd",
+            "second": "RawMessages!florenceresult",
+            "direction": "column",
+            "splitPercentage": 40
+          },
+          "direction": "row",
+          "splitPercentage": 50
+        },
+        "second": {
+          "first": "RawMessages!ons2status",
+          "second": "Plot!ons2cmd",
+          "direction": "row",
+          "splitPercentage": 50
+        },
+        "direction": "column",
+        "splitPercentage": 65
+      },
+      "direction": "column",
+      "splitPercentage": 35
+    },
+    "direction": "row",
+    "splitPercentage": 50
+  }
+}

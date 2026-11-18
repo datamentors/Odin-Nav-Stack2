@@ -1,0 +1,8 @@
+[Unit]
+Description=Keep USB 3 links awake for the Odin1 (no autosuspend, no U1/U2 link power management)
+After=systemd-udev-settle.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/odin_usb_tuning.sh
+[Install]
+WantedBy=multi-user.target

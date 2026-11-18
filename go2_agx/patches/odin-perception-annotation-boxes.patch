@@ -1,0 +1,19 @@
+Patch for Odin-perception (Manifold Tech, Apache-2.0; see its NOTICE), file inspection_perception/annotation.py.
+Draws boxes stored as {x0, y0, x1, y1} on the annotated image (before, no box was drawn).
+Apply inside the Odin-perception checkout with:  git apply <this file>
+
+diff --git a/inspection_perception/annotation.py b/inspection_perception/annotation.py
+index 8c4616d..ad66886 100644
+--- a/inspection_perception/annotation.py
++++ b/inspection_perception/annotation.py
+@@ -92,6 +92,10 @@ def _iter_boxes(detail: Any) -> List[Sequence[float]]:
+                     for k in ("box", "bbox"):
+                         if k in item:
+                             _push(item[k])
++                    # FIX (12 Nov): ops store boxes as geometry.Box.to_dict() = {"x0","y0","x1","y1",...};
++                    # without this no box was ever drawn on /inspection/annotated/compressed.
++                    if all(k in item for k in ("x0", "y0", "x1", "y1")):
++                        _push([item["x0"], item["y0"], item["x1"], item["y1"]])
+                 else:
+                     _push(item)
+     return out

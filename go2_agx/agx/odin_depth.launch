@@ -1,0 +1,6 @@
+<launch>
+  <!-- Same block as odin_ros_driver launch_ROS1/odin1_ros1.launch (Manifold Tech, Apache-2.0) -->
+  <node pkg="odin_ros_driver" type="pcd2depth_node" name="pcd2depth_node" output="screen" >
+    <rosparam command="load" file="$(find odin_ros_driver)/config/control_command.yaml"/>
+  </node>
+</launch>

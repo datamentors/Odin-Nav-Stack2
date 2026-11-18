@@ -9,6 +9,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Modified (Nov 2026, go2_agx): YOLOv5 input converted BGR->RGB; confidence threshold as ~conf_thres + /yolo/set_conf.
 
 
 import rospy
@@ -61,6 +62,16 @@ class YoloDetector:
         self.target_frame = rospy.get_param("~target_frame", "map")
         self.use_latest_tf = rospy.get_param("~use_latest_tf", True)  # use latest TF
         self.depth_mode = rospy.get_param("~depth_mode", "z")
+        # OUR change (12 Nov): confidence threshold was hard-coded to 0.25; now a param + live topic /yolo/set_conf
+        from std_msgs.msg import Float32 as _F32, String as _Str
+        self.conf_thres = float(rospy.get_param("~conf_thres", 0.25))
+        self._conf_echo = rospy.Publisher("/yolo/console", _Str, queue_size=1, latch=True)
+        def _set_conf(m):
+            v = min(max(float(m.data), 0.01), 0.99)
+            self.conf_thres = v
+            rospy.loginfo("[YOLO] confidence threshold -> %.2f", v)
+            self._conf_echo.publish(_Str(data="YOLO confidence threshold set to %.2f (%d %%)" % (v, round(v * 100))))
+        rospy.Subscriber("/yolo/set_conf", _F32, _set_conf)
         rospy.loginfo(f"[YOLO] RGB topic: {self.rgb_topic}")
         rospy.loginfo(f"[YOLO] Depth topic: {self.depth_topic}")
         rospy.loginfo(f"[YOLO] Target frame: {self.target_frame}")
@@ -213,14 +224,15 @@ class YoloDetector:
         )
 
         # convert to tensor
-        img = torch.from_numpy(img_resized).to(self.device)
+        # OUR fix (12 Nov): YOLOv5 expects RGB; cv_bridge gives BGR (red/blue swapped: chairs missed, "airplane"...)
+        img = torch.from_numpy(np.ascontiguousarray(img_resized[:, :, ::-1])).to(self.device)  # BGR->RGB
         img = img.permute(2, 0, 1).float()  # HWC to CHW
         img /= 255.0  # normalize
         if img.ndimension() == 3:
             img = img.unsqueeze(0)  # add batch dimension
 
         pred = self.model(img)[0]
-        pred = non_max_suppression(pred, conf_thres=0.25, iou_thres=0.45)
+        pred = non_max_suppression(pred, conf_thres=self.conf_thres, iou_thres=0.45)
 
         det_msg = Detection2DArray()
         det_msg.header = msg.header

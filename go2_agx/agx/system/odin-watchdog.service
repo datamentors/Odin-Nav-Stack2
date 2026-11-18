@@ -1,0 +1,12 @@
+[Unit]
+Description=Odin1 watchdog: restarts the Odin1 driver/USB when odometry stops
+After=docker.service network-online.target
+Wants=docker.service
+
+[Service]
+ExecStart=/usr/local/bin/odin_watchdog.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
