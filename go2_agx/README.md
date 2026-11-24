@@ -129,6 +129,7 @@ map, so they can be used by `go F#`.
 | `agx/` | `start_odin_agx.sh` / `stop_odin_agx.sh` (Odin1 driver), `start_depth_agx.sh`, `start_yolo_gpu_agx.sh` / `stop_yolo_gpu_agx.sh`, `start_perception_agx.sh` (Florence-2), `florence_service.py`, `florence_cmd_relay.py`, `cam_stream.py` (MJPEG camera view), `fix_odin_usb.sh`, `control_command_agx.yaml`, `odin_depth.launch`, `checklist.example.yaml` (for the Florence command `all`) |
 | `agx/yolo_gpu/` | `yolo_gpu_service.py` (YOLOv5l on the GPU, HTTP on 127.0.0.1), `yolo_detector_gpu.py` (ROS node, same topics as upstream `yolo_detector`), `yolo5_stubs.py` |
 | `agx/yolo_trt/` | `export_onnx.py` (YOLOv5l → ONNX), `yolo_trt_service.py` (same HTTP API as `yolo_gpu_service.py`, TensorRT engine), `compare.py` (PyTorch vs TensorRT on the same images) |
+| `agx/detbench/` | Detector benchmark (YOLOv5l vs RF-DETR, full frame vs 2x2 tiles, Orin vs Go2 CPU): `bench.py` (latency, FPS, recall, AP50 on a labelled COCO set), `run_orin.sh` (whole Orin matrix), `extract_frames.py` (rosbag → frames to label), `export_rfdetr.py` / `build_engines.sh` (RF-DETR → ONNX → TensorRT FP16). See its `README.md` |
 | `agx/system/` | `odin_watchdog.sh`, `odin_autostart.sh`, `odin_usb_tuning.sh`, their systemd units and the udev rule |
 | `agx/docker/` | `Dockerfile.driver` (image `odin-drv:0144`), `Dockerfile.yolo` (image `odin-yolo:0144`) |
 | `foxglove/` | Layout with 3D view, camera / YOLO / Florence images, command panels and STOP / RESET buttons |
