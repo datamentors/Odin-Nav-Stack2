@@ -4,8 +4,10 @@
 |---|---|
 | `extract_frames.py` | ROS 1 bags → evenly spaced, de-duplicated JPEGs for labelling (needs ROS Noetic python) |
 | `prelabel.py` | Two detectors → merged COCO pre-labels, a starting point for human labelling (never ground truth) |
+| `errors.py` | Error analysis of one model vs the ground truth: TP / missed / wrong boxes per frame (CSV + pictures) and its detections as COCO |
 | `labelstudio.py` | COCO pre-labels → Label Studio tasks + config, and Label Studio export → COCO ground truth |
 | `bench.py` | The benchmark: latency (pre/infer/post/e2e, p50/p95), FPS, recall/precision @conf, AP50, AP50-95 per class. One CSV row per run |
+| `update_from_github.sh` | On the Orin: pull this folder from GitHub (sparse, shallow clone < 1 MB) and copy the code into `~/odin_test/detbench` |
 | `run_orin.sh` | Full Orin matrix: YOLOv5l PyTorch + TensorRT, RF-DETR medium/large TensorRT, each with and without 2x2 tiles |
 | `export_rfdetr.py`, `build_engines.sh` | RF-DETR → ONNX → TensorRT FP16 (already done) |
 | `data/labels_person.json` | Ground truth of the 25 Nov restaurant set: 138 frames, 121 `person` boxes (frames are not in git) |
@@ -91,9 +93,23 @@ Reading: YOLOv5l is the most accurate and already above the camera rate (10 Hz);
 lower precision at the same recall; Large adds latency but no accuracy here; tiling is slower and worse.
 
 Caveats: the ground truth was made by correcting the pre-labels and no person was added by hand, so recall is an upper
-bound for every model (people missed by both models are not counted). The kept boxes are RF-DETR Medium's own boxes, so
-AP50-95 (box tightness) favours it — compare AP50 and recall/precision instead. Small set (1 person ≈ 0.8 % recall),
+bound for every model (people missed by both models are not counted). The kept boxes are unchanged model boxes (78 from RF-DETR
+Medium, 43 from YOLOv5l), so AP50-95 (box tightness) favours those two models — compare AP50 and recall/precision instead. Small set (1 person ≈ 0.8 % recall),
 one site, GPU clocks not locked, Go2 CPU and "with Florence" not measured yet.
+
+## 6. Errors of one model
+```bash
+.venv/bin/python errors.py --images data/frames_label --labels data/labels_person.json \
+    --weights models/rfdetr_large_fp16.engine --conf 0.5 --out data/errors_rfdetr_large
+```
+`vis/`: green = found, red = wrong box (+ score), yellow = labelled person it missed. `errors.csv`: one row per box.
+`predictions_coco.json` → `labelstudio.py to-tasks ... --config ""` to view the model's boxes in Label Studio.
+On 25 Nov, RF-DETR Large @0.5 missed 10 / 121 (seated people boxed differently, hands at the frame edge, dark corner)
+and made 21 wrong boxes, about half on the mechanical legs on the trolley; YOLOv5l @0.4 missed 5 and made 9.
+
+## Updating the Orin
+`~/odin_test/detbench/update_from_github.sh` (first run creates `~/Odin-Nav-Stack2`). Edit code on GitHub / your
+laptop, not in the clone: the update resets it to GitHub.
 
 ## Notes
 - Latency = decoded frame in memory → boxes in original pixels (JPEG decode excluded), after 10 warm-up runs.
