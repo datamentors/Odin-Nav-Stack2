@@ -4,9 +4,9 @@
 |---|---|
 | `extract_frames.py` | ROS 1 bags → evenly spaced, de-duplicated JPEGs for labelling (needs ROS Noetic python) |
 | `bench.py` | The benchmark: latency (pre/infer/post/e2e, p50/p95), FPS, recall/precision @conf, AP50, AP50-95 per class. One CSV row per run |
-| `run_orin.sh` | Full Orin matrix: YOLOv5l PyTorch + TensorRT, RF-DETR nano/small/medium TensorRT, each with and without 2x2 tiles |
+| `run_orin.sh` | Full Orin matrix: YOLOv5l PyTorch + TensorRT, RF-DETR medium/large TensorRT, each with and without 2x2 tiles |
 | `export_rfdetr.py`, `build_engines.sh` | RF-DETR → ONNX → TensorRT FP16 (already done) |
-| `models/` | `rfdetr_{nano,small,medium}.onnx` (fixed 384/512/576 input) and `*_fp16.engine` |
+| `models/` | `rfdetr_{medium,large}.onnx` (fixed 576/704 input) and `*_fp16.engine`. Nano/Small were dropped on 25 Nov: no speed gain over Medium on the Orin and lower accuracy |
 | `.venv/` | Python 3.10: Jetson torch 2.8.0 (CUDA 12.6), rfdetr 1.12.1, onnx 1.17, onnxruntime 1.18.1 (newer ORT crashes on this Orin) |
 | `smoke/` | 9 old test frames + pseudo-labels, only to check the code runs |
 
@@ -25,7 +25,7 @@ Decide up front: humanoid robots / mannequins / people on posters = not person (
 ```bash
 cd ~/odin_test/detbench
 ./run_orin.sh ~/bench_frames ~/bench_frames/labels.json          # whole matrix
-.venv/bin/python bench.py --images F --labels L --weights models/rfdetr_small_fp16.engine --tiles 4   # one run
+.venv/bin/python bench.py --images F --labels L --weights models/rfdetr_medium_fp16.engine --tiles 4   # one run
 ```
 Keep power mode MODE_30W (same as the README numbers). Optional "under load" run: start Florence first, `--note "with florence"`.
 
@@ -35,7 +35,7 @@ torch + the yolov5 repo (the ONS2 container) and `pip install onnxruntime==1.18.
 ```bash
 python3 bench.py --images F --labels L --weights yolov5l.pt --device cpu --yolov5-dir ~/ons2/yolov5 --hw "Go2 CPU"
 python3 bench.py --images F --labels L --weights yolov5l.onnx --family yolov5 --yolov5-dir ~/ons2/yolov5 --hw "Go2 CPU"
-python3 bench.py --images F --labels L --weights rfdetr_small.onnx --hw "Go2 CPU"
+python3 bench.py --images F --labels L --weights rfdetr_medium.onnx --hw "Go2 CPU"
 ```
 
 ## Notes

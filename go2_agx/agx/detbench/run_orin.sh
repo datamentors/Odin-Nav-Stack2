@@ -14,8 +14,8 @@ echo "power mode: $(nvpmodel -q 2>/dev/null | head -1)"
 B --weights $Y/yolov5l.pt "$@"
 B --weights ~/odin_test/yolo_trt/yolov5l_fp16.engine "$@"
 B --weights ~/odin_test/yolo_trt/yolov5l_fp16.engine --tiles 4 "$@"
-# RF-DETR (COCO-pretrained), TensorRT FP16
-for v in nano small medium; do
+# RF-DETR (COCO-pretrained), TensorRT FP16 (nano/small dropped 25 Nov: no speed gain over medium, lower accuracy)
+for v in medium large; do
   [ -f $M/rfdetr_${v}_fp16.engine ] || { echo "missing $M/rfdetr_${v}_fp16.engine (build_engines.sh)"; continue; }
   B --weights $M/rfdetr_${v}_fp16.engine "$@"
   B --weights $M/rfdetr_${v}_fp16.engine --tiles 4 "$@"
