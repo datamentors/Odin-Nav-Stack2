@@ -20,7 +20,7 @@ flowchart LR
       D["pcd2depth<br/>(depth image)"]
       Y["YOLO node + Florence-2<br/>frame server and relay"]
     end
-    G["GPU services on the host<br/>YOLOv5l (TensorRT FP16), Florence-2"]
+    G["GPU model services<br/>YOLOv5l (TensorRT FP16), Florence-2<br/>(optional container odin-gpu, otherwise on the host)"]
     W["watchdog + autostart"]
     Y <-- "HTTP, 127.0.0.1" --> G
   end
@@ -43,7 +43,7 @@ flowchart LR
 
 | Machine | Runs |
 |---|---|
-| **Jetson AGX Orin** | One container `odin-agx` with the Odin1 driver (the color camera needs USB 3), depth image, YOLO detector node, Florence-2 frame server and relay (separate processes inside it). On the host: the YOLOv5l (TensorRT) and Florence-2 GPU services, watchdog and autostart services |
+| **Jetson AGX Orin** | One container `odin-agx` with the Odin1 driver (the color camera needs USB 3), depth image, YOLO detector node, Florence-2 frame server and relay (separate processes inside it). The YOLOv5l (TensorRT) and Florence-2 GPU services run on the host, or in the optional container `odin-gpu` (see §GPU container). On the host: watchdog and autostart services |
 | **Go2 computer** | One container `ons2-go2` with the ROS 1 master, ONS2, command bridge, optional chassis bridge and Foxglove bridge (separate processes inside it; host ROS 2 untouched). Optional, only for the remote web monitor: a second container `odin-bridge` (ROS 1 ↔ ROS 2) |
 | **Laptop** | Foxglove layout with command panels and STOP / RESET buttons |
 
@@ -133,18 +133,19 @@ map, so they can be used by `go F#`.
 | Path | Contents |
 |---|---|
 | `go2/` | `start_odin_remote.sh` / `stop_odin_remote.sh` (create / remove the container `ons2-go2` with the ROS 1 master), `ons2_start.sh` / `ons2_stop.sh` (start / stop ONS2 inside it), `Dockerfile` (image `ons2:go2`), `start_bridge.sh` / `stop_bridge.sh` (optional ROS 1 ↔ ROS 2 bridge, container `odin-bridge`), `fastdds_udp.xml` (for the bridge), `remote_monitor_start.sh` (upstream web monitor on the Go2 host) |
-| `agx/` | `agx_lib.sh` (helpers for the single container `odin-agx`: one process per component), `start_odin_agx.sh` / `stop_odin_agx.sh` (creates the container, starts / stops the Odin1 driver), `start_depth_agx.sh`, `start_yolo_gpu_agx.sh` / `stop_yolo_gpu_agx.sh`, `start_perception_agx.sh` (Florence-2), `florence_service.py`, `florence_cmd_relay.py`, `cam_stream.py` (MJPEG camera view), `fix_odin_usb.sh`, `control_command_agx.yaml`, `odin_depth.launch`, `checklist.example.yaml` (for the Florence command `all`) |
+| `agx/` | `agx_lib.sh` (helpers for the single container `odin-agx`, one process per component, and for the optional container `odin-gpu`), `start_odin_agx.sh` / `stop_odin_agx.sh` (creates the container, starts / stops the Odin1 driver), `start_depth_agx.sh`, `start_yolo_gpu_agx.sh` / `stop_yolo_gpu_agx.sh`, `start_perception_agx.sh` (Florence-2), `florence_service.py`, `florence_cmd_relay.py`, `cam_stream.py` (MJPEG camera view), `fix_odin_usb.sh`, `control_command_agx.yaml`, `odin_depth.launch`, `checklist.example.yaml` (for the Florence command `all`) |
 | `agx/yolo_gpu/` | `yolo_gpu_service.py` (YOLOv5l on the GPU, HTTP on 127.0.0.1), `yolo_detector_gpu.py` (ROS node, same topics as upstream `yolo_detector`), `yolo5_stubs.py` |
 | `agx/yolo_trt/` | `export_onnx.py` (YOLOv5l → ONNX), `yolo_trt_service.py` (same HTTP API as `yolo_gpu_service.py`, TensorRT engine), `compare.py` (PyTorch vs TensorRT on the same images) |
 | `agx/system/` | `odin_watchdog.sh`, `odin_autostart.sh`, `odin_usb_tuning.sh`, their systemd units and the udev rule |
-| `agx/docker/` | `Dockerfile.driver` (image `odin-drv:0144`, build base), `Dockerfile.yolo` (image `odin-yolo:0144`, the image the container `odin-agx` runs) |
+| `agx/docker/` | `Dockerfile.driver` (image `odin-drv:0144`, build base), `Dockerfile.yolo` (image `odin-yolo:0144`, the image the container `odin-agx` runs), `Dockerfile.gpu` (image `odin-gpu:go2`, the optional container for the GPU model services) |
 | `foxglove/` | Layout with 3D view, camera / YOLO / Florence images, command panels and STOP / RESET buttons |
 | `patches/` | `odin-perception-annotation-boxes.patch` (separate `Odin-perception` repository: boxes were never drawn on the annotated image) and `odin_ros_driver-optional-no-raw-rgb.patch` (optional switch to publish only the compressed image) |
 
 **One container (AGX):** all ROS 1 parts run in `odin-agx` as processes named `driver`, `cam`, `depth`, `yolo`,
 `capture` and `relay`. Each has a pid file and a "wanted" mark in `/run/odin/` and a log in `~/odin_test/logs/agx/`.
-Restarting the driver keeps the container and the other processes. The GPU services (YOLOv5l TensorRT/PyTorch,
-Florence-2) stay on the host: the container is ROS Noetic (Python 3.8) and the JetPack 6 GPU wheels are Python 3.10.
+Restarting the driver keeps the container and the other processes. The GPU model services (YOLOv5l TensorRT/PyTorch,
+Florence-2) are not in this container: it is ROS Noetic (Python 3.8) and the JetPack 6 GPU wheels are Python 3.10. They run
+in the optional container `odin-gpu` when its image exists, otherwise on the host (see §GPU container).
 
 **Watchdog (AGX):** restarts the Odin1 driver if odometry stops (cancelling any mission first and resetting the USB
 hub if needed), and relaunches the depth, YOLO and Florence processes if they crash or lose the ROS master.
@@ -213,7 +214,7 @@ The scripts expect these locations (they can be changed inside the scripts).
 4. **Laptop:** open Foxglove, connect to `ws://<GO2_WIFI_IP>:8765` and import the layout from `foxglove/`.
 
 Stop with `ons2_stop.sh` on the Go2 (only ONS2; the container and the master keep running), `stop_odin_agx.sh all` on the AGX
-(without `all` it stops only the driver) and `stop_odin_remote.sh` on the Go2 (master and container).
+(it also removes `odin-gpu`; without `all` it stops only the driver) and `stop_odin_remote.sh` on the Go2 (master and container).
 
 ### AGX container `odin-agx`
 
@@ -245,8 +246,10 @@ tail -f ~/odin_test/logs/agx/driver.log           # follow one component
   `odin-perception-cmd`): the first `start_odin_agx.sh` removes them and creates the single container. Copy
   `agx/*` (including `agx_lib.sh`) to `~/odin_test/`, `agx/system/*.sh` to `/usr/local/bin/`, and run
   `sudo systemctl restart odin-watchdog`.
-- **GPU services stay on the host** (Python 3.10 wheels): the YOLOv5l TensorRT / PyTorch service and Florence-2 are not in
-  the container, so `docker logs` is no longer where to look; use the log files above.
+- **GPU services are not in `odin-agx`** (Python 3.10 wheels): the YOLOv5l TensorRT / PyTorch service and Florence-2 run in
+  `odin-gpu` or on the host, so `docker logs` is no longer where to look; use the log files: in `odin-gpu`
+  `~/odin_test/logs/gpu/yolosvc.log` and `florence.log`, on the host `~/odin_test/logs/yolo_gpu_service.log` and
+  `~/perception_test/florence_service.log`.
 
 ### Everything on the Go2 Jetson (no AGX)
 
@@ -257,18 +260,40 @@ stream, depth). Only the Go2 needs `network.env`, and `AGX_IP` can stay empty.
    load the image `odin-yolo:0144` (`docker save` on the AGX, `docker load` on the Go2).
 2. `start_odin_remote.sh`, then `~/odin_test/start_odin_agx.sh same` (the mode `same` joins the master of `ons2-go2` on this
    machine; no cable wait), then `start_depth_agx.sh`, then `ons2_start.sh --map=<map_name> --with-yolo`.
-3. YOLO runs on the CPU (ONS2's own YOLOv5s, about 4 Hz) and there is no Florence-2, unless the GPU environment of the AGX is
-   installed on the Go2 too (`~/odin-perception/.venv`, TensorRT, the weights); then use `start_yolo_gpu_agx.sh`,
-   `start_perception_agx.sh` and `--with-yolo-agx` as in §7.
+3. YOLO runs on the CPU (ONS2's own YOLOv5s, about 1-4 Hz) and there is no Florence-2, unless the GPU environment of the AGX is
+   installed on the Go2 too (`~/odin-perception` with its venv and the Florence-2 model, the YOLOv5l weights and the TensorRT
+   engine, see §GPU container); then use `start_yolo_gpu_agx.sh`, `start_perception_agx.sh` and `--with-yolo-agx` as in §7.
+   Measured on the Go2 (Orin NX, JetPack 6.2): the YOLO debug image runs at about 10 Hz with the GPU path and 1-4 Hz on the CPU.
 
 The watchdog and autostart detect this mode by themselves (the master address belongs to this machine) and skip the GPU
 parts when `~/odin-perception/.venv` does not exist.
+
+### GPU container `odin-gpu` (optional third container)
+
+Runs the two GPU model services, as the processes `yolosvc` (YOLOv5l TensorRT, port 8750) and `florence` (Florence-2, port 8740),
+instead of running them on the host. The ROS side stays in `odin-agx` (`yolo`, `capture`, `relay`). Host network, so the addresses
+`127.0.0.1:8750` / `:8740` do not change.
+
+- **Image:** `odin-gpu:go2`, from `agx/docker/Dockerfile.gpu` (NVIDIA JetPack 6.1 image: CUDA 12.6, cuDNN 9, TensorRT 10.3, Python 3.10,
+  plus `libopenblas0`, which the PyTorch wheel needs). About 5.6 GB to download, 15.5 GB on disk. Build it once on the machine,
+  no build context needed: `docker build -t odin-gpu:go2 - < agx/docker/Dockerfile.gpu`.
+- **Needs on the host:** the Docker `nvidia` runtime (it mounts only the GPU driver; CUDA, cuDNN and TensorRT come from the image), a JetPack 6.x
+  host, and the same files as the host mode: `~/odin-perception` (the venv with PyTorch and the Florence-2 model) and `~/odin_test`
+  (service code, YOLOv5l weights, the TensorRT engine). They are mounted at the same paths, so nothing is copied into the image.
+- **Selection:** `start_yolo_gpu_agx.sh` and `start_perception_agx.sh` use the container when the image exists (created on first use) and the host otherwise.
+  Force one with `GPU_MODE=container` or `GPU_MODE=host`. A copy of a service left on the host is stopped first (it would hold the port).
+- **Stop:** `stop_yolo_gpu_agx.sh` stops the YOLO service (the container stays); `stop_odin_agx.sh all` removes the container.
+- **TensorRT engine:** it only loads with the TensorRT version that built it. On the Go2 the image has TensorRT 10.3.0, the same as the host
+  (JetPack 6.2), and it loaded the engine built on the host; with another version, rebuild the engine (§ Jetson AGX Orin, step 8).
+- **Tested on the Go2** (26 Nov 2026): PyTorch sees the GPU inside the container, `test_stack.sh verify` expects the three containers and
+  checks `yolosvc` and `florence`, and a Florence-2 search followed by `go F1` walked the robot to the object.
 
 ### Test script
 
 `go2_agx/test_stack.sh` starts and checks everything from a PC with SSH access (`STACK=single` for everything on the Go2,
 `STACK=two` for AGX + Go2): `check`, `deploy`, `start`, `verify [--resilience]`, `stop`, `all`. It never starts the chassis
-bridge. SSH targets and passwords come from the environment (`GO2_SSH`, `GO2_SSHPASS`, ...); see the header of the script.
+bridge (so with the bridge running by hand, its safety check fails on purpose). With the image `odin-gpu:go2` on the machine and the GPU path it expects three
+containers (`odin-agx`, `ons2-go2`, `odin-gpu`) and checks their processes; `GPU_MODE=host` forces the host mode. SSH targets and passwords come from the environment (`GO2_SSH`, `GO2_SSHPASS`, ...); see the header of the script.
 
 ### Go2 container `ons2-go2`
 
