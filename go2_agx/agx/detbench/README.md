@@ -13,10 +13,14 @@
 | `sam2_track.py` | Prompt once (e.g. a Florence-2 box), then track with SAM 2: per-frame time, track check on labelled frames, pictures, optional video; several objects with repeated `--box` |
 | `sam2_prepost.py` | SAM 2 pre-processing (as on the robot, frames already decoded) and post-processing (mask → box, CPU vs GPU) on their own |
 | `export_rfdetr.py`, `build_engines.sh` | RF-DETR → ONNX → TensorRT FP16 (already done) |
+| `florence_tiles.py` | Florence-2 timing (pre / inference / post): whole image, one tile, and the 'far' search of `florence_service.py` (whole + 6 tiles + YOLO confirm); `--dtype`, `--tile 768`, `--save` boxes (§9) |
+| `reid_track.py` | RF-DETR TensorRT + BoT-SORT (BoxMOT), with or without OSNet Re-ID: per-stage timing, track IDs, returns, CSV, optional video (§10) |
+| `export_reid.py` | BoxMOT Re-ID model (OSNet x0.25) → ONNX (dynamic batch) → TensorRT FP16 engine |
+| `reid_gallery.py` | Long-term Re-ID on top of the tracker output, simulated live (appearance only, no position), scored against IDs checked by eye (§10) |
 | `data/labels_person.json` | Ground truth of the 25 Nov restaurant set: 138 frames, 121 `person` boxes (frames are not in git) |
 | `results/2026-11-25_orin.csv` | All Orin runs on that set (see §5) |
 | `models/` *(Orin only)* | `rfdetr_{medium,large}.onnx` (fixed 576/704 input) and `*_fp16.engine`. Nano/Small were dropped on 25 Nov: no speed gain over Medium on the Orin and lower accuracy |
-| `.venv/` *(Orin only)* | Python 3.10: Jetson torch 2.8.0 (CUDA 12.6), rfdetr 1.12.1, onnx 1.17, onnxruntime 1.18.1 (newer ORT crashes on this Orin) |
+| `.venv/` *(Orin only)* | Python 3.10: Jetson torch 2.8.0 (CUDA 12.6), rfdetr 1.12.1, onnx 1.17, onnxruntime 1.18.1 (newer ORT crashes on this Orin), boxmot 26.0.0 (see §10) |
 
 YOLOv5l engine/ONNX are reused from `~/odin_test/yolo_trt/`, weights from `~/odin_test/yolo/ros_ws/src/yolo_ros/scripts/models/`.
 
@@ -146,6 +150,73 @@ Behaviour over the whole clip (frames 91–984): the mask holds while the person
 leave it, never jumped to another person, but re-acquisition after leaving the view is unreliable (2 of 4 returns).
 So SAM 2 is not a speed-up over a detector; it is useful to follow objects detectors do not know, with a re-check
 (Florence-2 or a detector) when the track is lost.
+
+## 9. Florence-2 timing and the 6-tile 'far' search (26 Nov, Florence-2 base, GPU otherwise idle, 20 frames)
+Runs in the Odin-perception venv; the YOLO confirm step needs a YOLO service (a test one on :8751, stopped afterwards):
+```bash
+YOLO_GPU_PORT=8751 ~/odin-perception/.venv/bin/python ~/odin_test/yolo_trt/yolo_trt_service.py &
+cd ~/odin-perception && .venv/bin/python ~/odin_test/detbench/florence_tiles.py ~/odin_test/detbench/data/frames_label \
+    --phrase person --every 7 --yolo http://127.0.0.1:8751 --dtype float16 [--tile 768] [--save boxes.json]
+```
+| Model | Input | Pre | Inference | Post | End to end (mean / p50 / p95) | FPS |
+|---|---|---|---|---|---|---|
+| Florence-2 FP32 (as the service), whole image | 1600×1296 → 768×768 | 65 | 1181 | 1 | 1247 / 1208 / 1415 | 0.80 |
+| Florence-2 FP32, one tile | 615×720 → 768×768 | 35 | 1154 | 1 | 1190 / 1172 / 1354 | 0.84 |
+| Florence-2 FP32, far search (whole + 6 tiles) | 7 passes | 277 | 8102 | 194 | 8578 / 8491 / 9093 | 0.12 |
+| Florence-2 FP16, whole image | 1600×1296 → 768×768 | 65 | 508 | 1 | 574 / 536 / 730 | 1.74 |
+| Florence-2 FP16, far search, 615×720 tiles | 7 passes | 281 | 3357 | 218 | 3861 / 3776 / 4414 | 0.26 |
+| Florence-2 FP16, far search, 768×768 tiles | 7 passes | 262 | 3378 | 165 | 3809 / 3678 / 4450 | 0.26 |
+
+ms. Inference = `generate` (3 beams, token by token), ~95 % of the time. Far search post = 7 decodes + merge + YOLO
+confirm of the tile-only boxes (~200 ms, ~4 YOLO calls per frame). Florence-2 has no confidence score, so no 0.5 threshold.
+- **FP16 is 2.2× faster with the same boxes**: 33/33 far-search boxes match FP32 (mean IoU 0.999), same 16/16 labelled
+  people found. On the robot it is `dtype="float16"` in `florence_service.py` (not changed).
+- Every input is resized to 768×768 without keeping the aspect ratio, so a tile costs as much as the whole image.
+  768×768 tiles (3×2, no resize) cost the same, find the same people (16/16) and give fewer tile-only boxes (1.9 vs 2.5 per frame).
+- The tiles mostly add wrong boxes: ~50 tile-only boxes in 20 frames, YOLO kept 4, 1 was a missed labelled person.
+
+## 10. BoT-SORT + Re-ID (26 Nov, RF-DETR Large TensorRT, 985-frame clip at 10.2 Hz)
+BoxMOT is installed without its dependencies (it asks for NumPy 2, which breaks the Jetson torch), plus what it needs.
+BoxMOT is **AGPL-3.0**: fine for this benchmark, check before using it in the product.
+```bash
+.venv/bin/pip freeze | grep -iE "^(numpy|opencv|torch|torchvision|scipy)" > /tmp/c.txt
+.venv/bin/pip install --no-cache-dir --no-deps boxmot==26.0.0
+.venv/bin/pip install --no-cache-dir -c /tmp/c.txt lapcpp "gdown>=5.1,<6"
+.venv/bin/python export_reid.py models/osnet_x0_25_msmt17.pt      # weights are downloaded by BoxMOT on first use
+.venv/bin/python reid_track.py --images data/frames_clip --reid-model models/osnet_x0_25_msmt17_fp16.engine \
+    --out data/reid_on --video data/reid_on/track.mp4                # --no-reid for motion only, --lost-frames N
+.venv/bin/python reid_gallery.py --tracks data/reid_on/tracks.csv --images data/frames_clip --same 2 13 14 23 41
+```
+| Stage | Input | Pre | Inference | Post | End to end (mean / p50 / p95) | FPS |
+|---|---|---|---|---|---|---|
+| RF-DETR Large TensorRT FP16 | 704×704 | 5.8 | 49.5 | 1.5 | | |
+| OSNet x0.25 Re-ID TensorRT FP16 | person crops → 256×128 | 11.4 | 8.0 | 1.0 | | |
+| BoT-SORT (camera-motion compensation + association) | boxes + embeddings | | 9.8 | | | |
+| **Total, BoT-SORT with Re-ID** | | | | | **85.1 / 82.4 / 140.5** | **11.8** |
+| Total, BoT-SORT without Re-ID | | | | | 57.4 / 57.8 / 86.1 | 17.4 |
+
+ms per frame, JPEG decode excluded. OSNet in PyTorch FP16 took 63 ms; the TensorRT engine gives identical embeddings
+(cosine 1.000). RF-DETR is slower here than in §7 (45–50 vs 33 ms): this loop also reads JPEGs and writes video, so
+the GPU is not kept busy.
+
+**Re-ID result.** Re-ID on vs off: 20 vs 18 IDs, 6 vs 5 returns with the same ID, all after short gaps (1–3.8 s) in about
+the same place. Keeping lost tracks 60 s instead of 4 s changed nothing: BoT-SORT only uses appearance when the new box
+overlaps the lost track's predicted position (`proximity_thresh`), so it helps through short occlusions but a person who
+comes back elsewhere always gets a new ID.
+
+**Long-term Re-ID (`reid_gallery.py`)**: a new track is compared, by appearance only, with the tracks that already ended.
+Ground truth checked by eye: the seated person in a green shirt got IDs 2, 13, 14, 23, 41.
+
+| Threshold | Green-shirt IDs left (ideal 1) | Other IDs merged into that person |
+|---|---|---|
+| 0.70 | 2 | 1 |
+| 0.75 | 3 | 0 |
+| 0.80 | 4 | 0 |
+| 0.85 | 5 | 0 |
+
+Same-person similarity (0.49–0.80) overlaps different-person similarity (0.58–0.67), so no threshold works with OSNet
+x0.25 on this data: a seated, partly hidden person seen from a moving robot is far from its training data (MSMT17,
+standing pedestrians from campus cameras).
 
 ## Notes
 - Latency = decoded frame in memory → boxes in original pixels (JPEG decode excluded), after 10 warm-up runs.
