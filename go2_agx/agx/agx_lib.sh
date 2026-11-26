@@ -69,3 +69,48 @@ agx_stop_proc() {
 agx_alive()  { agx_running && docker exec $AGX_CTR bash -c 'p=$(cat /run/odin/$1.pid 2>/dev/null); [ -n "$p" ] && kill -0 -- -$p 2>/dev/null' _ "$1"; }
 agx_wanted() { agx_running && docker exec $AGX_CTR test -f /run/odin/$1.on; }
 agx_age()    { docker exec $AGX_CTR bash -c 'echo $(( $(date +%s) - $(stat -c %Y /run/odin/$1.pid 2>/dev/null || date +%s) ))' _ "$1"; }
+
+# ---- optional third container "odin-gpu": the GPU model services (YOLOv5l TensorRT/PyTorch on :8750, Florence-2 on :8740) ----
+# Used when the image odin-gpu:go2 exists on this machine (Go2: docker build -f docker/Dockerfile.gpu); otherwise the services
+# run on the host as before (AGX Orin: venv in ~/odin-perception). Force with GPU_MODE=container|host.
+# The container has its own CUDA / cuDNN / TensorRT (JetPack image); the venv, the models, the TensorRT engine and the
+# service code are mounted from the host at the same paths. Host network: 127.0.0.1:8750 / :8740 do not change.
+# Processes inside (names yolosvc, florence): /run/odin-gpu/NAME.pid + NAME.on; logs on the host: $D/logs/gpu/NAME.log
+GPU_CTR=${GPU_CTR:-odin-gpu}
+GPU_IMAGE=${GPU_IMAGE:-odin-gpu:go2}
+GPU_LOGS=$D/logs/gpu
+gpu_in_container() {
+  case "${GPU_MODE:-auto}" in container) return 0 ;; host) return 1 ;; *) docker image inspect $GPU_IMAGE >/dev/null 2>&1 ;; esac
+}
+gpu_running() { [ "$(docker inspect -f '{{.State.Running}}' $GPU_CTR 2>/dev/null)" = true ]; }
+gpu_log() { echo $GPU_LOGS/$1.log; }
+gpu_ensure() {
+  gpu_running && return 0
+  docker rm -f $GPU_CTR >/dev/null 2>&1
+  mkdir -p $GPU_LOGS $HOME/perception_test
+  docker run -d --init --name $GPU_CTR --network host --runtime nvidia \
+    -e HOME=$HOME -e PYTHONUNBUFFERED=1 -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all \
+    -v $HOME/odin-perception:$HOME/odin-perception -v $D:$D -v $HOME/perception_test:$HOME/perception_test \
+    --entrypoint sleep $GPU_IMAGE infinity >/dev/null || return 1
+  docker exec $GPU_CTR mkdir -p /run/odin-gpu
+}
+# gpu_start NAME "command": (re)starts a service in odin-gpu (own process group, log on the host)
+gpu_start() {
+  gpu_stop_proc "$1"
+  docker exec $GPU_CTR bash -c ': > '$GPU_LOGS'/$1.log; touch /run/odin-gpu/$1.on' _ "$1" || return 1
+  docker exec -d $GPU_CTR setsid bash -c '
+      echo $$ > /run/odin-gpu/$1.pid
+      exec bash -c "$2" >> '$GPU_LOGS'/$1.log 2>&1' _ "$1" "$2"
+  for _ in 1 2 3 4 5 6; do gpu_alive "$1" && return 0; sleep 0.5; done
+  return 1
+}
+gpu_stop_proc() {
+  gpu_running || return 0
+  docker exec $GPU_CTR bash -c '
+      rm -f /run/odin-gpu/$1.on
+      p=$(cat /run/odin-gpu/$1.pid 2>/dev/null); [ -n "$p" ] || exit 0
+      kill -INT -- -$p 2>/dev/null
+      for i in $(seq 1 10); do kill -0 -- -$p 2>/dev/null || break; sleep 1; done
+      kill -KILL -- -$p 2>/dev/null; rm -f /run/odin-gpu/$1.pid; exit 0' _ "$1"
+}
+gpu_alive() { gpu_running && docker exec $GPU_CTR bash -c 'p=$(cat /run/odin-gpu/$1.pid 2>/dev/null); [ -n "$p" ] && kill -0 -- -$p 2>/dev/null' _ "$1"; }

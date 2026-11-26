@@ -154,8 +154,12 @@ do_stop() {
 do_verify() {
   local ym; ym=$(yolo_mode)
   echo "== containers (STACK=$STACK, YOLO: $ym)"
-  local gnames; gnames=$(g 'docker ps --format "{{.Names}}"')
-  if [ "$STACK" = single ]; then
+  local gnames gpuctr=no; gnames=$(g 'docker ps --format "{{.Names}}"')
+  # GPU path with the image odin-gpu:go2 on the machine: the model services run in a third container
+  [ "$ym" = gpu ] && [ "$(a 'docker image inspect odin-gpu:go2 >/dev/null 2>&1 && echo yes')" = yes ] && gpuctr=yes
+  if [ "$STACK" = single ] && [ "$gpuctr" = yes ]; then
+    n=$(grep -cE '^(odin-agx|ons2-go2|odin-gpu)$' <<< "$gnames"); [ "$n" = 3 ] && ok "Go2: exactly the 3 required containers (odin-agx, ons2-go2, odin-gpu)" || bad "Go2: $n of the 3 required containers running"
+  elif [ "$STACK" = single ]; then
     n=$(grep -cE '^(odin-agx|ons2-go2)$' <<< "$gnames"); [ "$n" = 2 ] && ok "Go2: exactly the 2 required containers (odin-agx, ons2-go2)" || bad "Go2: $n of the 2 required containers running"
   else
     grep -qx ons2-go2 <<< "$gnames" && ok "Go2: ons2-go2 running" || bad "Go2: ons2-go2 not running"
@@ -169,6 +173,12 @@ do_verify() {
   for p in $procs; do
     chk "process $p alive and wanted" a "docker exec odin-agx bash -c 'kill -0 -- -\$(cat /run/odin/$p.pid) && test -f /run/odin/$p.on'"
   done
+  if [ "$gpuctr" = yes ]; then
+    echo "== odin-gpu processes"
+    for p in yolosvc florence; do
+      chk "process $p alive and wanted" a "docker exec odin-gpu bash -c 'kill -0 -- -\$(cat /run/odin-gpu/$p.pid) && test -f /run/odin-gpu/$p.on'"
+    done
+  fi
   if [ "$ym" = gpu ]; then
     chk "YOLO GPU service answers (127.0.0.1:8750)" a 'curl -sf -m 3 http://127.0.0.1:8750/health'
     chk "Florence frame server has frames (127.0.0.1:8730)" a 'curl -sf -m 3 http://127.0.0.1:8730/meta.json | grep -q "\"has_frame\": true"'

@@ -1,0 +1,13 @@
+# GO2 (or AGX) JETSON. Third container "odin-gpu": runs the GPU model services (YOLOv5l TensorRT/PyTorch on 127.0.0.1:8750 and
+# Florence-2 on 127.0.0.1:8740) instead of running them on the host. Optional: without this image the scripts use the host venv.
+#   docker build -t odin-gpu:go2 - < Dockerfile.gpu        (no build context needed; run it where this file is, e.g. from the repo)
+# Base: the NVIDIA JetPack 6.1 image (CUDA 12.6, cuDNN 9, TensorRT 10.3, Python 3.10, Ubuntu 22.04), compatible with a JetPack 6.x host
+# (the Go2 runs L4T R36.4.4). The Docker runtime "nvidia" gives it the GPU. Only libopenblas0 is installed on top: the venv with PyTorch and
+# Florence-2 (~/odin-perception), the service code, the YOLO weights and the TensorRT engine (~/odin_test) are mounted from the host at the
+# same paths by agx_lib.sh. A TensorRT engine only loads with the TensorRT version it was built with: if the container's version differs
+# from the one that built yolov5l_fp16.engine, rebuild the engine inside the container (README, TensorRT engine).
+FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
+# libopenblas0: the Jetson PyTorch wheel in the venv needs it and the base image does not have it
+RUN apt-get update && apt-get install -y --no-install-recommends libopenblas0 && rm -rf /var/lib/apt/lists/*
+ENV PYTHONUNBUFFERED=1 NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=all
+CMD ["sleep", "infinity"]

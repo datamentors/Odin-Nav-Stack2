@@ -13,23 +13,36 @@ agx_alive depth || echo "WARNING: no depth (start_depth_agx.sh): detections will
 #    (~50 ms/image instead of ~300-430 ms with PyTorch, same detections: ~/odin_test/yolo_trt/compare.py) when the engine
 #    exists; if it is missing or does not start, the PyTorch service as before. Force PyTorch: YOLO_BACKEND=pytorch
 T=$D/yolo_trt; SVC_PAT="odin_test/yolo_(gpu/yolo_gpu|trt/yolo_trt)_service[.]py"
-pkill -f "$SVC_PAT"; for i in $(seq 1 10); do pgrep -f "$SVC_PAT" >/dev/null || break; sleep 1; done
+# The service runs in the container odin-gpu when its image exists (see agx_lib.sh), otherwise on the host
+if gpu_in_container; then SVC_LOG=$(gpu_log yolosvc); gpu_ensure || { echo "Container $GPU_CTR failed to start"; exit 1; }
+else SVC_LOG=$D/logs/yolo_gpu_service.log; fi
+svc_stop() {
+  if gpu_in_container; then gpu_stop_proc yolosvc; pkill -u $(id -u) -f "$SVC_PAT"   # a copy left on the host would keep the port
+  else pkill -f "$SVC_PAT"; fi
+  for i in $(seq 1 10); do pgrep -f "$SVC_PAT" >/dev/null || break; sleep 1; done
+}
+svc_up() { if gpu_in_container; then gpu_alive yolosvc; else pgrep -f "$SVC_PAT" >/dev/null; fi; }
+svc_stop
 start_svc() {   # $1 folder  $2 script. Fully detached (own session, no fd shared with this script) so this script can always exit
-  (cd $1 && exec env YOLO_GPU_PORT=8750 PIP_NO_INDEX=1 setsid $HOME/odin-perception/.venv/bin/python $1/$2 > $D/logs/yolo_gpu_service.log 2>&1 < /dev/null) &
-  disown; sleep 2; pgrep -f "$SVC_PAT" | head -1 > $G/service.pid
-  for i in $(seq 1 30); do sleep 1; curl -sf -m 2 http://127.0.0.1:8750/health >/dev/null && return 0; pgrep -f "$SVC_PAT" >/dev/null || return 1; done
+  if gpu_in_container; then
+    gpu_start yolosvc "cd $1 && exec env YOLO_GPU_PORT=8750 PIP_NO_INDEX=1 $HOME/odin-perception/.venv/bin/python $1/$2" || return 1
+  else
+    (cd $1 && exec env YOLO_GPU_PORT=8750 PIP_NO_INDEX=1 setsid $HOME/odin-perception/.venv/bin/python $1/$2 > $SVC_LOG 2>&1 < /dev/null) &
+    disown; sleep 2; pgrep -f "$SVC_PAT" | head -1 > $G/service.pid
+  fi
+  for i in $(seq 1 30); do sleep 1; curl -sf -m 2 http://127.0.0.1:8750/health >/dev/null && return 0; svc_up || return 1; done
   return 1
 }
 if [ "${YOLO_BACKEND:-tensorrt}" = tensorrt ] && [ -f $T/yolov5l_fp16.engine ] && start_svc $T yolo_trt_service.py; then
   :
 else
   if [ "${YOLO_BACKEND:-tensorrt}" = tensorrt ]; then
-    echo "TensorRT service not available, using PyTorch. Its log:"; tail -3 $D/logs/yolo_gpu_service.log
-    pkill -f "$SVC_PAT"; sleep 2
+    echo "TensorRT service not available, using PyTorch. Its log:"; tail -3 $SVC_LOG
+    svc_stop; sleep 2
   fi
-  start_svc $G yolo_gpu_service.py || { echo "GPU service failed: tail $D/logs/yolo_gpu_service.log"; tail -5 $D/logs/yolo_gpu_service.log; exit 1; }
+  start_svc $G yolo_gpu_service.py || { echo "GPU service failed: tail $SVC_LOG"; tail -5 $SVC_LOG; exit 1; }
 fi
-echo "OK: $(grep -m1 -E "YOLO (GPU|TensorRT) service" $D/logs/yolo_gpu_service.log)"
+echo "OK: $(grep -m1 -E "YOLO (GPU|TensorRT) service" $SVC_LOG)$(gpu_in_container && echo "  [container $GPU_CTR]")"
 # 2. ROS detector (same params as their yolo_detection.launch)
 agx_cp $G/yolo_detector_gpu.py /yolo_detector_gpu.py
 agx_start yolo "python3 /yolo_detector_gpu.py __name:=yolo_detector \\
