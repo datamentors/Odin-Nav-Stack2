@@ -7,7 +7,6 @@
 | `errors.py` | Error analysis of one model vs the ground truth: TP / missed / wrong boxes per frame (CSV + pictures) and its detections as COCO |
 | `labelstudio.py` | COCO pre-labels → Label Studio tasks + config, and Label Studio export → COCO ground truth |
 | `bench.py` | The benchmark: latency (pre/infer/post/e2e, p50/p95), FPS, recall/precision @conf, AP50, AP50-95 per class. One CSV row per run |
-| `update_from_github.sh` | On the Orin: pull this folder from GitHub (sparse, shallow clone < 1 MB) and copy the code into `~/odin_test/detbench` |
 | `run_orin.sh` | Full Orin matrix: YOLOv5l PyTorch + TensorRT, RF-DETR medium/large TensorRT, each with and without 2x2 tiles |
 | `profile_stages.py` | Per-stage latency of one detector on the GPU: pre-processing, inference (CUDA events), post-processing, end to end, p50/p95 |
 | `florence_load.py` | GPU load generator: Florence-2 run back to back exactly like `florence_service.py` (worst case, for "under load" timings) |
@@ -147,10 +146,6 @@ Behaviour over the whole clip (frames 91–984): the mask holds while the person
 leave it, never jumped to another person, but re-acquisition after leaving the view is unreliable (2 of 4 returns).
 So SAM 2 is not a speed-up over a detector; it is useful to follow objects detectors do not know, with a re-check
 (Florence-2 or a detector) when the track is lost.
-
-## Updating the Orin
-`~/odin_test/detbench/update_from_github.sh` (first run creates `~/Odin-Nav-Stack2`). Edit code on GitHub / your
-laptop, not in the clone: the update resets it to GitHub.
 
 ## Notes
 - Latency = decoded frame in memory → boxes in original pixels (JPEG decode excluded), after 10 warm-up runs.
