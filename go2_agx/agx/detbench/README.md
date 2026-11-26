@@ -9,6 +9,10 @@
 | `bench.py` | The benchmark: latency (pre/infer/post/e2e, p50/p95), FPS, recall/precision @conf, AP50, AP50-95 per class. One CSV row per run |
 | `update_from_github.sh` | On the Orin: pull this folder from GitHub (sparse, shallow clone < 1 MB) and copy the code into `~/odin_test/detbench` |
 | `run_orin.sh` | Full Orin matrix: YOLOv5l PyTorch + TensorRT, RF-DETR medium/large TensorRT, each with and without 2x2 tiles |
+| `profile_stages.py` | Per-stage latency of one detector on the GPU: pre-processing, inference (CUDA events), post-processing, end to end, p50/p95 |
+| `florence_load.py` | GPU load generator: Florence-2 run back to back exactly like `florence_service.py` (worst case, for "under load" timings) |
+| `sam2_track.py` | Prompt once (e.g. a Florence-2 box), then track with SAM 2: per-frame time, track check on labelled frames, pictures, optional video; several objects with repeated `--box` |
+| `sam2_prepost.py` | SAM 2 pre-processing (as on the robot, frames already decoded) and post-processing (mask → box, CPU vs GPU) on their own |
 | `export_rfdetr.py`, `build_engines.sh` | RF-DETR → ONNX → TensorRT FP16 (already done) |
 | `data/labels_person.json` | Ground truth of the 25 Nov restaurant set: 138 frames, 121 `person` boxes (frames are not in git) |
 | `results/2026-11-25_orin.csv` | All Orin runs on that set (see §5) |
@@ -106,6 +110,43 @@ one site, GPU clocks not locked, Go2 CPU and "with Florence" not measured yet.
 `predictions_coco.json` → `labelstudio.py to-tasks ... --config ""` to view the model's boxes in Label Studio.
 On 25 Nov, RF-DETR Large @0.5 missed 10 / 121 (seated people boxed differently, hands at the frame edge, dark corner)
 and made 21 wrong boxes, about half on the mechanical legs on the trolley; YOLOv5l @0.4 missed 5 and made 9.
+
+## 7. Timing per stage (26 Nov, Orin MODE_30W, 985-frame clip, conf 0.5)
+```bash
+.venv/bin/python profile_stages.py --images data/frames_clip --weights models/rfdetr_medium_fp16.engine
+cd ~/odin-perception && .venv/bin/python ~/odin_test/detbench/florence_load.py ~/odin_test/detbench/data/frames_clip &   # load
+```
+| Model | Input | Pre | Inference | Post | End to end | p95 | FPS | With Florence-2 running: end to end / p95 / FPS |
+|---|---|---|---|---|---|---|---|---|
+| YOLOv5l TensorRT FP16 | 640 (544×640) | 16.0 | 29.6 | 9.2 | 54.8 | 57.1 | 18.2 | 80.2 / 94.2 / 12.5 |
+| YOLOv5l PyTorch FP16 | 640 (544×640) | 7.5 | 52.0 | 5.0 | 64.5 | 65.6 | 15.5 | 137.2 / 165.8 / 7.3 |
+| RF-DETR Medium TensorRT FP16 | 576×576 | 5.1 | 23.6 | 3.0 | 31.7 | 32.1 | 31.6 | 59.9 / 69.6 / 16.7 |
+| RF-DETR Large TensorRT FP16 | 704×704 | 5.6 | 33.0 | 3.0 | 41.7 | 43.4 | 24.0 | 80.0 / 92.1 / 12.5 |
+
+ms per frame. Florence-2 back to back is the worst case (on the robot it only runs per command). JPEG decoding is
+not counted (the robot gets raw frames). YOLOv5l TensorRT's CPU pre/post (16 + 9 ms) is ~2x the same code in the
+PyTorch process: ~12 ms to recover if it stays.
+
+## 8. SAM 2 tracking after one Florence-2 prompt (26 Nov, SAM 2.1 tiny, GPU otherwise idle)
+Install in the same venv (torch untouched; the build otherwise downloads its own torch into ~/.cache/pip):
+```bash
+.venv/bin/pip install --no-cache-dir "setuptools>=69,<76" wheel hydra-core iopath
+SAM2_BUILD_CUDA=0 PIP_NO_CACHE_DIR=1 .venv/bin/pip install --no-build-isolation --no-deps git+https://github.com/facebookresearch/sam2.git
+mkdir -p models/sam2 && curl -L -o models/sam2/sam2.1_hiera_tiny.pt https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt
+.venv/bin/python sam2_track.py --images data/frames_clip --start 91 --frames 894 --box 1073 564 1188 754 \
+    --image-size 512 --labels data/labels_person.json --out data/sam2_full_512 --video data/sam2_full_512/track.mp4
+```
+| SAM 2 input | Objects | Pre | Track | Post (CPU / GPU box) | End to end | FPS |
+|---|---|---|---|---|---|---|
+| 512 | 1 | 4.6 | 73.0 | 7.7 / 1.4 | 85.3 | 11.7 |
+| 512 | 2 | 4.6 | 109.2 | 15.0 / 1.7 | 128.8 | 7.8 |
+| 1024 | 1 | 8.9 | 329.2 | 7.7 / 1.4 | 345.8 | 2.9 |
+
+With Florence-2 running, 1 object @512: track 145 ms (~5–6 FPS). Each extra object adds ~36 ms.
+Behaviour over the whole clip (frames 91–984): the mask holds while the person is in view, empties correctly when they
+leave it, never jumped to another person, but re-acquisition after leaving the view is unreliable (2 of 4 returns).
+So SAM 2 is not a speed-up over a detector; it is useful to follow objects detectors do not know, with a re-check
+(Florence-2 or a detector) when the track is lost.
 
 ## Updating the Orin
 `~/odin_test/detbench/update_from_github.sh` (first run creates `~/Odin-Nav-Stack2`). Edit code on GitHub / your
