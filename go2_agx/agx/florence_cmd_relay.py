@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AGX ORIN, ROS 1 container (odin-perception-cmd). OUR helper (not upstream): Foxglove <-> Florence-2 service.
+# AGX ORIN, ROS 1, process relay in the container odin-agx. OUR helper (not upstream): Foxglove <-> Florence-2 service.
 #   /florence/command (std_msgs/String): "chair" (numbered: chair 1, chair 2 ...), "describe 2", "show",
 #                                        "check chair", "all" (full checklist) ...
 #   /florence/result  (std_msgs/String): the answers; the annotated image is on /inspection/annotated/compressed

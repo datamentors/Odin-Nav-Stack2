@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AGX ORIN, Odin-perception CUDA venv. OUR helper (not upstream): YOLOv5l on the AGX GPU for the ONS2 yolo_detector.
 # ROS 1 (python 3.8, containers) and the CUDA torch (python 3.10, this venv) cannot live in one process, so the
-# ROS node (yolo_detector_gpu.py, container odin-yolo-gpu) letterboxes the image and asks this service for the
+# ROS node (yolo_detector_gpu.py, process yolo in the container odin-agx) letterboxes the image and asks this service for the
 # raw YOLOv5 output + NMS (~60 ms on the GPU instead of ~3 s on a CPU). Same code path as their detector.
 #   GET  /names                         -> {"0": "person", ...}
 #   POST /infer?conf=0.25&iou=0.45      body = letterboxed BGR uint8 image, header X-Shape: "h,w"

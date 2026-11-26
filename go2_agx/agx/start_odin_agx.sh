@@ -4,12 +4,14 @@
 #   ~/odin_test/start_odin_agx.sh go2     joins the ROS master on the Go2 Jetson (GO2_IP) over the
 #                                         Ethernet cable; the AGX must have AGX_IP on eno1
 # Stop with: ~/odin_test/stop_odin_agx.sh
+# The driver runs as the process "driver" of the single AGX container odin-agx (see agx_lib.sh). If the container already
+# runs with the same ROS master it is kept, so only the driver (and the camera stream) restart.
 CONF="${GO2_AGX_CONF:-$HOME/.config/go2_agx/network.env}"; [ -f "$CONF" ] && . "$CONF"   # see go2_agx/network.env.example
 : "${GO2_IP:?set GO2_IP (Go2 wired address, runs the ROS master) in $CONF}"
 : "${AGX_IP:?set AGX_IP (AGX address on the cable to the Go2) in $CONF}"
 MODE=${1:-local}
 D=$HOME/odin_test
-CFG=$D/control_command_agx.yaml
+. $D/agx_lib.sh
 case $MODE in
   local) ENV="-e ROS_MASTER_URI=http://localhost:11311 -e ROS_HOSTNAME=localhost"; WAIT="" ;;
   go2)   # Wait (up to 90 s) for the cable link, the IP and the Go2, instead of failing at the first try:
@@ -38,30 +40,24 @@ if ! odin_present; then
   echo "  Fix: run ~/odin_test/fix_odin_usb.sh (resets the USB hub). If that fails: unplug the Odin1 power for 10 s and plug it back."
   exit 1
 fi
-docker rm -f odin-agx odin-cam >/dev/null 2>&1
-start_driver() {
-docker run -d --name odin-agx --network host --privileged -v /dev/bus/usb:/dev/bus/usb $ENV \
-  -v $CFG:/opt/odin/ros_ws/src/odin_ros_driver/config/control_command.yaml:ro \
-  -v $D/maps/relocalization:/opt/odin/maps/relocalization:ro \
-  --entrypoint /bin/bash odin-drv:0144 \
-  -c "source /opt/ros/noetic/setup.bash; source /opt/odin/ros_ws/devel_isolated/setup.bash; roslaunch $WAIT odin_ros_driver odin1_headless.launch" >/dev/null
-}
+agx_ensure "$ENV" || { echo "ERROR: could not start the container $AGX_CTR"; exit 1; }
+start_driver() { agx_start driver "env -u LD_PRELOAD roslaunch $WAIT odin_ros_driver odin1_headless.launch"; }
 echo "Mode: $MODE. Odin1 USB: $(for d in /sys/bus/usb/devices/*; do [ -f $d/idVendor ] && grep -qi hawk $d/product && echo "speed=$(cat $d/speed)"; done)"
 start_driver
 echo "Loading the map into the Odin1 (USB 3: fast if it is already stored in the Odin1)..."
 for i in $(seq 1 40); do
   sleep 5
-  LOG=$(docker logs odin-agx 2>&1)
+  LOG=$(cat $(agx_log driver) 2>&1)
   if echo "$LOG" | grep -q "relocalization success"; then echo "OK: relocalization success"; break; fi
   if echo "$LOG" | grep -q "Open device failed" && [ -z "$RETRIED" ]; then
     echo "The Odin1 is not answering yet: retrying in 10 s"; RETRIED=1
-    docker rm -f odin-agx >/dev/null; sleep 10; start_driver; continue
+    agx_stop_proc driver; sleep 10; start_driver; continue
   fi
   if echo "$LOG" | grep -q -E "file start fail|map path set fail|Open device failed|FATAL"; then
     echo "DRIVER ERROR:"; echo "$LOG" | grep -E "fail|FATAL" | tail -5; exit 1
   fi
 done
 # Color camera for the laptop over Wi-Fi (MJPEG over HTTP, full resolution): http://<AGX Wi-Fi IP>:8080/
-docker cp $D/cam_stream.py odin-agx:/cam_stream.py && docker exec -d odin-agx bash -c "source /opt/ros/noetic/setup.bash; exec /usr/bin/python3 /cam_stream.py > /tmp/cam_stream.log 2>&1"
+agx_cp $D/cam_stream.py /cam_stream.py && agx_start cam "/usr/bin/python3 /cam_stream.py"
 echo "Camera stream: http://$(ip -4 -br addr show wlP1p1s0 | awk "{print \$3}" | cut -d/ -f1):8080/  (open it in a browser)"
 echo "$LOG" | grep -q "relocalization success" || echo "WARNING: not relocalized yet (the Odin1 must be inside the mapped area; moving it gently helps)"

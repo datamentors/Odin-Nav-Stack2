@@ -2,7 +2,8 @@
 # AGX ORIN. Boot autostart (systemd service "odin-autostart", runs as root, once per boot).
 # After the AGX is switched on (or reboots) it brings everything back without anyone typing anything:
 #   1. waits for the Odin1 on USB and for the Go2 on the Ethernet cable (they may still be booting)
-#   2. start_odin_agx.sh go2       Odin1 driver + relocalization (joins the ROS master on the Go2)
+#   2. start_odin_agx.sh go2       creates the single container odin-agx; Odin1 driver + relocalization (joins the
+#                                  ROS master on the Go2)
 #   3. start_depth_agx.sh          depth image for the ONS2 yolo_ros
 #   3b. start_yolo_gpu_agx.sh      YOLOv5l detector on the AGX GPU (Go2: ons2_start.sh --with-yolo-agx)
 #   4. start_perception_agx.sh     Florence-2 (numbered detection) + frame server + Foxglove relay

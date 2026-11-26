@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AGX ORIN, Odin-perception CUDA venv. TensorRT version of ~/odin_test/yolo_gpu/yolo_gpu_service.py with the SAME
-# HTTP API, so the ROS node (yolo_detector_gpu.py, container odin-yolo-gpu) does not change at all:
+# HTTP API, so the ROS node (yolo_detector_gpu.py, process yolo in the container odin-agx) does not change at all:
 #   GET  /names                         -> {"0": "person", ...}
 #   POST /infer?conf=0.25&iou=0.45      body = letterboxed BGR uint8 image, header X-Shape: "h,w"
 #                                       -> JSON [[x1, y1, x2, y2, conf, cls], ...] in letterbox pixels

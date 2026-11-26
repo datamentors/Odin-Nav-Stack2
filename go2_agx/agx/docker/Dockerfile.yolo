@@ -1,6 +1,7 @@
 # Image odin-yolo:0144 - ROS 1 Noetic + YOLOv5 runtime on top of odin-drv:0144 (CPU PyTorch: the ROS Noetic container is
 # Python 3.8; the NVIDIA GPU wheels for JetPack 6 are Python 3.10, so the GPU part runs outside, see yolo_gpu/).
-# Used on the AGX as the ROS 1 environment of: odin-yolo-gpu (detector node), odin-perception-cap, odin-perception-cmd.
+# Used on the AGX as the ONE container "odin-agx" (see agx/agx_lib.sh): it runs the Odin1 driver, depth, the YOLO detector
+# node and the Florence-2 frame server and relay as processes. odin-drv:0144 is only its build base.
 # Build from the REPOSITORY ROOT (needs the yolov5 submodule):
 #   git submodule update --init yolov5
 #   docker build -f go2_agx/agx/docker/Dockerfile.yolo -t odin-yolo:0144 .
