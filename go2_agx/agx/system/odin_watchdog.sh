@@ -86,12 +86,13 @@ while true; do
   fi
   FAILS=$((FAILS+1)); [ $FAILS -lt 2 ] && continue
   MODE=local; docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' odin-agx | grep -q "ROS_MASTER_URI=http://${GO2_IP}" && MODE=go2
+  [ $MODE = go2 ] && ip -4 addr show | grep -q "inet ${GO2_IP}/" && MODE=same   # everything on the Go2: the master is on this machine
   if [ $MODE = go2 ] && ! ping -c1 -W2 ${GO2_IP} >/dev/null; then
     log "no odometry, but the Go2 (${GO2_IP}) does not answer: network/Go2 problem, not restarting the driver"; FAILS=0; sleep 20; continue
   fi
   ATTEMPTS=$((ATTEMPTS+1))
   log "NO ODOMETRY for ~20 s (attempt $ATTEMPTS, mode $MODE, Odin1 on USB: $(odin_present && echo yes || echo NO)). Recovering..."
-  [ $MODE = go2 ] && safety_stop
+  [ $MODE != local ] && safety_stop
   tail -n 300 $(agx_log driver) 2>/dev/null | grep -E 'ERROR|reset|unrespons' | tail -5 | sed 's/^/    driver: /' >> $LOG
   # hub reset on the first 3 attempts, then only every 5th (if the Odin1 is unpowered/hung, resetting
   # the hub every minute does not help: just wait for it to come back after you power-cycle it)
@@ -102,7 +103,7 @@ while true; do
   fi
   cp $(agx_log driver) $D/logs/driver_$(date +%Y%m%d_%H%M%S)_watchdog.log 2>/dev/null
   su - $U -c "$D/start_odin_agx.sh $MODE" >> $LOG 2>&1 && log "driver restarted" || log "driver restart FAILED (will retry)"
-  [ $MODE = go2 ] && notify "Odin1 dropped and was restarted automatically (relocalized). Mission was cancelled: send it again."
+  [ $MODE != local ] && notify "Odin1 dropped and was restarted automatically (relocalized). Mission was cancelled: send it again."
   FAILS=0
   [ $ATTEMPTS -ge 3 ] && sleep 60
 done

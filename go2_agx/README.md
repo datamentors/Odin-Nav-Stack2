@@ -15,7 +15,7 @@ small fix in an upstream file. Based on upstream commit `19654eb`.
 ```mermaid
 flowchart LR
   subgraph AGX["Jetson AGX Orin"]
-    subgraph C["one container: odin-agx (ROS 1 Noetic)"]
+    subgraph AC["one container: odin-agx (ROS 1 Noetic)"]
       O1["Odin1 driver<br/>(USB 3)"]
       D["pcd2depth<br/>(depth image)"]
       Y["YOLO node + Florence-2<br/>frame server and relay"]
@@ -25,10 +25,14 @@ flowchart LR
     Y <-- "HTTP, 127.0.0.1" --> G
   end
   subgraph GO2["Unitree Go2 computer"]
-    M["ROS 1 master"]
-    N["ONS2 container<br/>map planner · NeuPAN · mission manager"]
-    B["command bridge<br/>(go to / follow / stop / reset)"]
-    C["chassis bridge<br/>(optional)"]
+    subgraph GC["one container: ons2-go2 (ROS 1 Noetic)"]
+      M["ROS 1 master"]
+      N["ONS2<br/>map planner · NeuPAN · mission manager"]
+      B["command bridge<br/>(go to / follow / stop / reset)"]
+      C["chassis bridge<br/>(optional)"]
+    end
+    RB["ROS 1 to ROS 2 bridge<br/>(optional, own container)"]
+    M -.- RB
   end
   FG["Foxglove<br/>(laptop)"]
   O1 & D & Y -- "Ethernet, ROS 1" --> M
@@ -40,7 +44,7 @@ flowchart LR
 | Machine | Runs |
 |---|---|
 | **Jetson AGX Orin** | One container `odin-agx` with the Odin1 driver (the color camera needs USB 3), depth image, YOLO detector node, Florence-2 frame server and relay (separate processes inside it). On the host: the YOLOv5l (TensorRT) and Florence-2 GPU services, watchdog and autostart services |
-| **Go2 computer** | ROS 1 master, ONS2 (in its own container, host ROS 2 untouched), command bridge, optional chassis bridge, Foxglove bridge |
+| **Go2 computer** | One container `ons2-go2` with the ROS 1 master, ONS2, command bridge, optional chassis bridge and Foxglove bridge (separate processes inside it; host ROS 2 untouched). Optional, only for the remote web monitor: a second container `odin-bridge` (ROS 1 ↔ ROS 2) |
 | **Laptop** | Foxglove layout with command panels and STOP / RESET buttons |
 
 ---
@@ -128,7 +132,7 @@ map, so they can be used by `go F#`.
 
 | Path | Contents |
 |---|---|
-| `go2/` | `ons2_start.sh` / `ons2_stop.sh` (ONS2 container `ons2-go2`), `Dockerfile` (image `ons2:go2`), `start_odin_remote.sh` / `stop_odin_remote.sh` (ROS 1 master + ROS 1 ↔ ROS 2 bridge), `fastdds_udp.xml`, `remote_monitor_start.sh` (upstream web monitor on the Go2 host) |
+| `go2/` | `start_odin_remote.sh` / `stop_odin_remote.sh` (create / remove the container `ons2-go2` with the ROS 1 master), `ons2_start.sh` / `ons2_stop.sh` (start / stop ONS2 inside it), `Dockerfile` (image `ons2:go2`), `start_bridge.sh` / `stop_bridge.sh` (optional ROS 1 ↔ ROS 2 bridge, container `odin-bridge`), `fastdds_udp.xml` (for the bridge), `remote_monitor_start.sh` (upstream web monitor on the Go2 host) |
 | `agx/` | `agx_lib.sh` (helpers for the single container `odin-agx`: one process per component), `start_odin_agx.sh` / `stop_odin_agx.sh` (creates the container, starts / stops the Odin1 driver), `start_depth_agx.sh`, `start_yolo_gpu_agx.sh` / `stop_yolo_gpu_agx.sh`, `start_perception_agx.sh` (Florence-2), `florence_service.py`, `florence_cmd_relay.py`, `cam_stream.py` (MJPEG camera view), `fix_odin_usb.sh`, `control_command_agx.yaml`, `odin_depth.launch`, `checklist.example.yaml` (for the Florence command `all`) |
 | `agx/yolo_gpu/` | `yolo_gpu_service.py` (YOLOv5l on the GPU, HTTP on 127.0.0.1), `yolo_detector_gpu.py` (ROS node, same topics as upstream `yolo_detector`), `yolo5_stubs.py` |
 | `agx/yolo_trt/` | `export_onnx.py` (YOLOv5l → ONNX), `yolo_trt_service.py` (same HTTP API as `yolo_gpu_service.py`, TensorRT engine), `compare.py` (PyTorch vs TensorRT on the same images) |
@@ -162,9 +166,10 @@ The scripts expect these locations (they can be changed inside the scripts).
 **Go2 computer**
 1. This repository at `~/ons2`, built inside the container as upstream describes.
 2. `go2_agx/go2/ons2_*.sh`, `remote_monitor_start.sh` and `Dockerfile` in `~/ons2_docker/`;
-   `start_odin_remote.sh`, `stop_odin_remote.sh` and `fastdds_udp.xml` in `~/odin_nav_stack/drv0144/`.
-3. Images: `ons2:go2` (see `go2/Dockerfile`), plus `odin-nav:drv0144` and `ros1_bridge:go2` from the earlier
-   Odin-Nav-Stack (ONS1) Go2 setup, which are not part of this repository.
+   `start_odin_remote.sh`, `stop_odin_remote.sh`, `start_bridge.sh`, `stop_bridge.sh` and `fastdds_udp.xml` in
+   `~/odin_nav_stack/drv0144/`.
+3. Images: `ons2:go2` (see `go2/Dockerfile`; it is built on `odin-nav:drv0144` from the earlier Odin-Nav-Stack (ONS1)
+   Go2 setup, which is not part of this repository). `ros1_bridge:go2` (also from ONS1) is only needed for the optional bridge.
 
 **Jetson AGX Orin**
 1. `go2_agx/agx/*` in `~/odin_test/`; the `yolov5` submodule copied to `~/odin_test/yolo_gpu/yolov5`.
@@ -198,7 +203,8 @@ The scripts expect these locations (they can be changed inside the scripts).
 
 ## 7. Start-up order
 
-1. **Go2:** start the ROS master and bridge: `~/odin_nav_stack/drv0144/start_odin_remote.sh`.
+1. **Go2:** start the container `ons2-go2` with the ROS master: `~/odin_nav_stack/drv0144/start_odin_remote.sh`
+   (add `--with-bridge` only if you use the remote web monitor).
 2. **AGX:** power it on. The autostart service brings up the Odin1 driver (relocalization), depth, YOLO and
    Florence-2 in about 1–2 minutes (by hand: `start_odin_agx.sh go2`, `start_depth_agx.sh`,
    `start_yolo_gpu_agx.sh`, `start_perception_agx.sh`).
@@ -206,7 +212,8 @@ The scripts expect these locations (they can be changed inside the scripts).
    when the robot should walk.
 4. **Laptop:** open Foxglove, connect to `ws://<GO2_WIFI_IP>:8765` and import the layout from `foxglove/`.
 
-Stop with `ons2_stop.sh` on the Go2 and `stop_odin_agx.sh all` on the AGX (without `all` it stops only the driver).
+Stop with `ons2_stop.sh` on the Go2 (only ONS2; the container and the master keep running), `stop_odin_agx.sh all` on the AGX
+(without `all` it stops only the driver) and `stop_odin_remote.sh` on the Go2 (master and container).
 
 ### AGX container `odin-agx`
 
@@ -240,6 +247,51 @@ tail -f ~/odin_test/logs/agx/driver.log           # follow one component
   `sudo systemctl restart odin-watchdog`.
 - **GPU services stay on the host** (Python 3.10 wheels): the YOLOv5l TensorRT / PyTorch service and Florence-2 are not in
   the container, so `docker logs` is no longer where to look; use the log files above.
+
+### Everything on the Go2 Jetson (no AGX)
+
+The same two containers can run on the Go2 itself: `ons2-go2` (ROS master + ONS2) and `odin-agx` (Odin1 driver, camera
+stream, depth). Only the Go2 needs `network.env`, and `AGX_IP` can stay empty.
+
+1. Copy `go2_agx/agx/*` to `~/odin_test/` on the Go2, link the maps (`ln -s ~/odin_nav_stack/docker/maps ~/odin_test/maps`) and
+   load the image `odin-yolo:0144` (`docker save` on the AGX, `docker load` on the Go2).
+2. `start_odin_remote.sh`, then `~/odin_test/start_odin_agx.sh same` (the mode `same` joins the master of `ons2-go2` on this
+   machine; no cable wait), then `start_depth_agx.sh`, then `ons2_start.sh --map=<map_name> --with-yolo`.
+3. YOLO runs on the CPU (ONS2's own YOLOv5s, about 4 Hz) and there is no Florence-2, unless the GPU environment of the AGX is
+   installed on the Go2 too (`~/odin-perception/.venv`, TensorRT, the weights); then use `start_yolo_gpu_agx.sh`,
+   `start_perception_agx.sh` and `--with-yolo-agx` as in §7.
+
+The watchdog and autostart detect this mode by themselves (the master address belongs to this machine) and skip the GPU
+parts when `~/odin-perception/.venv` does not exist.
+
+### Test script
+
+`go2_agx/test_stack.sh` starts and checks everything from a PC with SSH access (`STACK=single` for everything on the Go2,
+`STACK=two` for AGX + Go2): `check`, `deploy`, `start`, `verify [--resilience]`, `stop`, `all`. It never starts the chassis
+bridge. SSH targets and passwords come from the environment (`GO2_SSH`, `GO2_SSHPASS`, ...); see the header of the script.
+
+### Go2 container `ons2-go2`
+
+One container (image `ons2:go2`) holds the ROS 1 master and ONS2. `start_odin_remote.sh` creates it and starts the master
+as the process `master`; `ons2_start.sh` then starts ONS2 inside it (tmux session `ons2_go2`). The AGX connects to the
+master at `GO2_IP:11311`.
+
+```bash
+docker exec -it ons2-go2 tmux attach -t ons2_go2      # ONS2 windows (Ctrl+b d to leave)
+tail -f ~/ons2/logs/master.log                        # the ROS master
+~/ons2_docker/ons2_stop.sh                            # stop only ONS2 (master and AGX connection stay)
+~/odin_nav_stack/drv0144/stop_odin_remote.sh          # stop master + container (the AGX loses its master)
+```
+
+- **Restarting ONS2** (`ons2_start.sh` again, `--with-bridge`, `--with-yolo-agx`...) does not touch the master, so the AGX
+  stays connected. Re-running `start_odin_remote.sh` while everything runs does nothing.
+- **Stopping the master** (`stop_odin_remote.sh`) stops ONS2 too. The AGX processes then register again in the new
+  master; the AGX watchdog relaunches them.
+- **Optional ROS 1 ↔ ROS 2 bridge** (only for `remote_monitor_start.sh`): `start_bridge.sh` / `stop_bridge.sh`, or
+  `start_odin_remote.sh --with-bridge`. It is a separate container (`odin-bridge`, image `ros1_bridge:go2`, ROS Foxy) and
+  is not needed for navigation.
+- **Moving from the old setup** (containers `odin-master`, `odin-bridge`, `ons2-go2`): the first `start_odin_remote.sh`
+  removes `odin-master` and the old `ons2-go2` and creates the new one. Copy the `go2/` scripts to the two folders of §6.
 
 ---
 

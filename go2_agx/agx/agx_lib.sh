@@ -10,6 +10,7 @@
 # Needs $D (= ~/odin_test) set before sourcing.
 AGX_CTR=${AGX_CTR:-odin-agx}      # the override is for tests only
 AGX_IMAGE=odin-yolo:0144
+AGX_CONFIG=${AGX_CONFIG:-$D/control_command_agx.yaml}   # driver config mounted into the container (another file: e.g. odometry mode without a map)
 AGX_LOGS=$D/logs/agx
 AGX_LEGACY_CTRS="odin-cam odin-depth odin-yolo-gpu odin-perception-cap odin-perception-cmd"   # the pre-merge containers
 
@@ -29,7 +30,7 @@ agx_ensure() {
   docker rm -f $AGX_CTR $AGX_LEGACY_CTRS >/dev/null 2>&1
   mkdir -p $AGX_LOGS
   docker run -d --init --name $AGX_CTR --network host --privileged -v /dev/bus/usb:/dev/bus/usb $1 -e PYTHONUNBUFFERED=1 \
-    -v $D/control_command_agx.yaml:/opt/odin/ros_ws/src/odin_ros_driver/config/control_command.yaml:ro \
+    -v $AGX_CONFIG:/opt/odin/ros_ws/src/odin_ros_driver/config/control_command.yaml:ro \
     -v $D/maps/relocalization:/opt/odin/maps/relocalization:ro \
     -v $HOME/odin-perception:/opt/odin-perception \
     -v $AGX_LOGS:/var/log/odin \

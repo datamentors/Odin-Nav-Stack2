@@ -21,10 +21,11 @@ for i in $(seq 1 90); do odin_present && break; sleep 2; done
 odin_present && log "Odin1 on USB" || log "Odin1 not on USB yet (the watchdog will handle it later)"
 for i in $(seq 1 150); do ping -c1 -W2 ${GO2_IP} >/dev/null 2>&1 && break; sleep 2; done   # up to ~5-10 min
 ping -c1 -W2 ${GO2_IP} >/dev/null 2>&1 || { log "Go2 (${GO2_IP}) not reachable: nothing started. Run by hand later: sudo systemctl restart odin-autostart"; exit 0; }
-# the ROS master on the Go2 (odin-master) may come up later than the network: wait for port 11311
+# the ROS master on the Go2 (process master in the container ons2-go2) may come up later than the network: wait for port 11311
 for i in $(seq 1 120); do timeout 2 bash -c "exec 3<>/dev/tcp/${GO2_IP}/11311" 2>/dev/null && break; sleep 5; done
 log "Go2 network OK, starting the Odin1 driver"
-as_user "$D/start_odin_agx.sh go2" && log "driver OK" || log "driver start reported a problem (the watchdog will retry)"
+MODE=go2; ip -4 addr show | grep -q "inet ${GO2_IP}/" && MODE=same   # same: everything runs on the Go2 Jetson
+as_user "$D/start_odin_agx.sh $MODE" && log "driver OK" || log "driver start reported a problem (the watchdog will retry)"
 # 18 Nov: each companion waits for the Go2 ROS master again and is retried up to 3 times (the master may be restarted
 # while we start them: they then crash with "unable to contact ROS master"). The watchdog also relaunches them later.
 master_up() { timeout 2 bash -c "exec 3<>/dev/tcp/${GO2_IP}/11311" 2>/dev/null; }
@@ -38,6 +39,10 @@ start_companion() {   # $1 script  $2 label
   log "$2 start FAILED 3 times: the watchdog keeps retrying"
 }
 start_companion start_depth_agx.sh "depth"
-start_companion start_yolo_gpu_agx.sh "YOLO GPU (YOLOv5l)"
-start_companion start_perception_agx.sh "Florence-2"
+if [ -x $H/odin-perception/.venv/bin/python ]; then   # GPU environment (CUDA venv): only there
+  start_companion start_yolo_gpu_agx.sh "YOLO GPU (YOLOv5l)"
+  start_companion start_perception_agx.sh "Florence-2"
+else
+  log "no GPU environment (~/odin-perception/.venv): YOLO GPU and Florence-2 not started (use ons2_start.sh --with-yolo)"
+fi
 log "=== autostart done"

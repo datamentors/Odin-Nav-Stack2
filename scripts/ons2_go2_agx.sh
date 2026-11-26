@@ -3,7 +3,7 @@
 # Same as the official scripts/ons2_go2.sh (same tmux windows, gates, mission_manager args, console), except:
 #   1. The Odin1 driver runs on the AGX Orin (start_odin_agx.sh go2), not here: the "odin" window only checks
 #      its data. Gate 1 = /odin1/odometry streaming, Gate 2 = relocalized (TF map -> imu).
-#   2. roscore: reuses the ROS master already running on the Go2 (odin-master) that the AGX is connected to.
+#   2. roscore: reuses the ROS master already running in this container (start_odin_remote.sh) that the AGX is connected to.
 #   3. Profile robots/go2_agx (copy of robots/go2). Chassis bridge only if ONS2_BRIDGE=1 (ons2_start.sh --with-bridge):
 #      then THEIR bridge unitree_control (vel_to_sdk) runs as shipped: it STANDS THE ROBOT UP at start, FreeWalk,
 #      no arm/disarm. Without it /cmd_vel is published but nothing moves the legs.
@@ -41,7 +41,7 @@ ENV_PREFIX="source /opt/ros/noetic/setup.bash && source ${REPO_ROOT}/ros_ws/deve
 
 ons2_log "w0 ROS master (shared with the AGX): ${ROS_MASTER_URI}"
 if timeout 3 rosparam get /run_id >/dev/null 2>&1; then
-  tmux send-keys -t "${SESSION}:roscore" "echo Using the existing ROS master ${ROS_MASTER_URI} (odin-master container)" C-m
+  tmux send-keys -t "${SESSION}:roscore" "echo Using the existing ROS master ${ROS_MASTER_URI} (process master of this container)" C-m
 else
   tmux send-keys -t "${SESSION}:roscore" "source /opt/ros/noetic/setup.bash && roscore 2>&1 | tee ${LOG_DIR}/roscore.log" C-m
   timeout 30 bash -c "until timeout 3 rosparam get /run_id >/dev/null 2>&1; do sleep 1; done" || ons2_fail "ROS Master not ready"

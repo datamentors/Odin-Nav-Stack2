@@ -4,6 +4,7 @@
 # Base = our working ONS1 image (Ubuntu 20.04 + ROS Noetic + conda env "neupan" Python 3.10 + torch 2.1 + cvxpy/SCS).
 # The ONS2 repo (~/ons2) is MOUNTED at the same path at runtime and built there (ros_ws/devel), so the official
 # scripts (scripts/ons2_go2.sh ...) run unmodified paths. The old image odin-nav:drv0144 is untouched.
+# The container ons2-go2 made from this image also runs the ROS master (start_odin_remote.sh) and ONS2 (ons2_start.sh).
 FROM odin-nav:drv0144
 RUN apt-get update && apt-get install -y --no-install-recommends \
       tmux ros-noetic-rosbridge-suite ros-noetic-foxglove-bridge \
