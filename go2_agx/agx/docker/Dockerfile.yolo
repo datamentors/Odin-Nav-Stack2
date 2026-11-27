@@ -31,3 +31,7 @@ COPY go2_agx/patches/odin-perception-annotation-boxes.patch /tmp/perc.patch
 RUN git -C /opt/odin-perception apply /tmp/perc.patch
 LABEL odin.perception=baked
 ENV LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1
+# The headless launch file (driver only, no rviz) that start_odin_agx.sh uses; the upstream package has only odin1_ros1.launch.
+# Last on purpose: cheap to change.
+COPY go2_agx/agx/docker/odin1_headless.launch /opt/odin/ros_ws/src/odin_ros_driver/launch_ROS1/odin1_headless.launch
+

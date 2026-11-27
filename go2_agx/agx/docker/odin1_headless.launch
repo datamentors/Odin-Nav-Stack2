@@ -1,0 +1,9 @@
+<launch>
+    <!-- Solo el driver, sin rviz ni nodos de reproyeccion (Jetson sin pantalla) -->
+    <!-- Driver only, no rviz and no reprojection nodes (the Jetson has no display). Copied into the odin-yolo image by Dockerfile.yolo;
+         start_odin_agx.sh runs it with: roslaunch odin_ros_driver odin1_headless.launch. The depth image is started separately (start_depth_agx.sh). -->
+    <arg name="config_file" default="$(find odin_ros_driver)/config/control_command.yaml"/>
+    <node name="host_sdk_sample" pkg="odin_ros_driver" type="host_sdk_sample" output="screen">
+        <param name="config_file" value="$(arg config_file)"/>
+    </node>
+</launch>
