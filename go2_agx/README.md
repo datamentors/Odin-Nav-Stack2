@@ -226,7 +226,8 @@ but **not tested yet**. The manual steps below are what it does.
    Florence-2 in about 1–2 minutes (by hand: `start_odin_agx.sh go2`, `start_depth_agx.sh`,
    `start_yolo_gpu_agx.sh`, `start_perception_agx.sh`).
 3. **Go2:** start ONS2: `~/ons2_docker/ons2_start.sh --map=<map_name> --with-yolo-agx`, adding `--with-bridge` only
-   when the robot should walk.
+   when the robot should walk. Add `--with-cloud` to also run `cloud_publisher` (JSON for the cloud link, see `cloud/README.md`;
+   it also starts the ROS 1 → ROS 2 bridge `odin-bridge` if needed). The cloud side itself is the Pulse profile in ardia-robotics.
 4. **Laptop:** open Foxglove, connect to `ws://<GO2_WIFI_IP>:8765` and import the layout from `foxglove/`.
 
 Stop with `ons2_stop.sh` on the Go2 (only ONS2; the container and the master keep running), `stop_odin_agx.sh all` on the AGX
@@ -309,7 +310,7 @@ instead of running them on the host. The ROS side stays in `odin-agx` (`yolo`, `
 
 ### Test script
 
-`go2_agx/test_stack.sh` starts and checks everything from a PC with SSH access (`STACK=single` for everything on the Go2,
+`go2_agx/test_stack.sh` (`CLOUD=1` also starts `cloud_publisher` with `--with-cloud` and verifies its messages: envelope, identity, `odin.pose.v1`, `odin.status.v1`) starts and checks everything from a PC with SSH access (`STACK=single` for everything on the Go2,
 `STACK=two` for AGX + Go2): `check`, `deploy`, `start`, `verify [--resilience]`, `stop`, `all`. It never starts the chassis
 bridge (so with the bridge running by hand, its safety check fails on purpose). With the image `odin-gpu:go2` on the machine and the GPU path it expects three
 containers (`odin-agx`, `ons2-go2`, `odin-gpu`) and checks their processes; `GPU_MODE=host` forces the host mode. SSH targets and passwords come from the environment (`GO2_SSH`, `GO2_SSHPASS`, ...); see the header of the script. `GO2_SSH=local` runs the whole test on the Go2 itself (no SSH, no password).

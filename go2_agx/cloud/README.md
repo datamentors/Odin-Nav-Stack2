@@ -27,19 +27,23 @@ The topic names are the String inputs of the Pulse `cloud_gateway` (node name `c
 - Florence: `/florence/objects_3d` is only published while `send on` is active in the Florence relay, so searches done with `send off` do not reach the cloud.
 - Map name: read from the ROS parameter `/map_planner/map_file_name`.
 
-## Run on the Go2 (stack running)
+## Run on the Go2
+
+`cloud_publisher` is one more tmux window of the ONS2 start, like the other components. It runs from the repo copy in `~/ons2` (`install.sh --ons2` copies the repo there and records the commit in `~/ons2/.stack_commit`), so there is no image rebuild and no `docker cp`:
 
 ```
-./start_cloud_publisher.sh    # cloud_publisher in ons2-go2, and odin-bridge if it is not running
-./stop_cloud_publisher.sh     # stops the node (--with-bridge stops the bridge too)
+~/ons2_docker/ons2_start.sh --map=<map_name> --with-yolo-agx --with-cloud
+docker exec -it ons2-go2 tmux attach -t ons2_go2     # window "cloud"; log: ~/ons2/logs/cloud_node.log
 ```
+
+`--with-cloud` also starts the ROS 1 -> ROS 2 bridge (`odin-bridge`) if it is not running. `ons2_stop.sh` stops the node with the rest of ONS2; the bridge keeps running (`stop_bridge.sh` stops it). With the test script: `CLOUD=1 GO2_SSH=local ./go2_agx/test_stack.sh all` starts everything with the cloud window and verifies the messages (`tests/verify_topics.py`, run inside `ons2-go2`).
 
 Then, in ardia-robotics on the branch `go2-demo`: `scripts/go2_odin/start.sh` and `scripts/go2_odin/check.sh`.
-The node alone, inside ons2-go2: `python3 cloud_publisher.py _config:=config/cloud_publisher.yaml`.
+By hand inside ons2-go2 (development): `python3 cloud_publisher.py _config:=config/cloud_publisher.yaml`.
 
 ## Tests (no ROS needed)
 
-`python3 tests/test_logic.py` (helpers in `cloud_logic.py`); `python3 tests/test_examples.py` and `python3 tests/test_node.py` (need `jsonschema` and `pyyaml`). `test_node.py` runs the node with fake ROS modules and checks every message it publishes against the envelope, its payload schema, its topic and the size.
+`python3 tests/test_logic.py` (helpers in `cloud_logic.py`) and `python3 tests/test_verify_topics.py`; `python3 tests/test_examples.py` and `python3 tests/test_node.py` (need `jsonschema` and `pyyaml`). `test_node.py` runs the node with fake ROS modules and checks every message it publishes against the envelope, its payload schema, its topic and the size.
 
 ## Status (27 Nov 2026)
 

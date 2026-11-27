@@ -22,6 +22,8 @@
 # Settings (environment). SSH keys are best; for passwords pass them only through the environment, never in a file:
 #   GO2_SSH=user@host  GO2_SSHPASS=...                      (always; GO2_SSH=local runs everything on this machine, STACK=single only)
 #   AGX_SSH=user@host  AGX_SSHPASS=...                      (STACK=two only)
+#   CLOUD=1    also start our cloud_publisher (ons2_start.sh --with-cloud, plus the ROS 1 -> ROS 2 bridge odin-bridge) and verify its
+#              messages. The cloud side itself (gateways, AWS) is in ardia-robotics and is not started or tested here.
 #   NO_MAP=1   test away from the mapped site: the Odin1 runs in odometry mode (custom_map_mode 0, the map frame equals the odom
 #              frame, no relocalization) and ONS2 uses the empty placeholder map (--map=empty). Not the real map: only a functional test.
 #   MAP=<ONS2 navigation map on the Go2>   GO2_IP (and AGX_IP for STACK=two)   (the IPs: only for `deploy`, to create a missing network.env)
@@ -34,6 +36,7 @@ case "$STACK" in
   *) echo "STACK must be single or two"; exit 1 ;;
 esac
 MAP="${MAP:-restaurant_walls}"; NO_MAP="${NO_MAP:-0}"; [ "$NO_MAP" = 1 ] && MAP=empty
+CLOUD="${CLOUD:-0}"; CFLAG=""; [ "$CLOUD" = 1 ] && CFLAG=" --with-cloud"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SSHOPTS="-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
 CMD="${1:-check}"; shift || true
@@ -142,9 +145,9 @@ do_start() {
   if [ "$ym" = gpu ]; then
     step "odin-agx: YOLO (GPU service + detector)"    a '~/odin_test/start_yolo_gpu_agx.sh'
     step "odin-agx: Florence-2 (frame server + relay)" a '~/odin_test/start_perception_agx.sh'
-    step "Go2: ONS2 (no chassis bridge, map $MAP, YOLO on the GPU)" g "~/ons2_docker/ons2_start.sh --map=$MAP --with-yolo-agx"
+    step "Go2: ONS2 (no chassis bridge, map $MAP, YOLO on the GPU)" g "~/ons2_docker/ons2_start.sh --map=$MAP --with-yolo-agx$CFLAG"
   else
-    step "Go2: ONS2 (no chassis bridge, map $MAP, YOLO on the CPU)" g "~/ons2_docker/ons2_start.sh --map=$MAP --with-yolo"
+    step "Go2: ONS2 (no chassis bridge, map $MAP, YOLO on the CPU)" g "~/ons2_docker/ons2_start.sh --map=$MAP --with-yolo$CFLAG"
   fi
 }
 do_stop() {
@@ -170,7 +173,11 @@ do_verify() {
     n=$(a 'docker ps --format "{{.Names}}" | grep -c "^odin-"'); [ "$n" = 1 ] && ok "AGX: exactly 1 odin container" || bad "AGX: $n odin containers (expected 1)"
   fi
   grep -qx odin-master <<< "$gnames" && bad "old odin-master container still running" || ok "no separate master container"
-  grep -qx odin-bridge <<< "$gnames" && echo "  (the optional odin-bridge is running)"
+  if [ "$CLOUD" = 1 ]; then
+    grep -qx odin-bridge <<< "$gnames" && ok "odin-bridge (ROS 1 -> ROS 2) running" || bad "odin-bridge not running: the cloud side gets no data"
+  else
+    grep -qx odin-bridge <<< "$gnames" && echo "  (the optional odin-bridge is running)"
+  fi
 
   echo "== odin-agx processes"
   local procs="driver cam depth"; [ "$ym" = gpu ] && procs="$procs yolo capture relay"
@@ -191,6 +198,7 @@ do_verify() {
   echo "== ROS graph (seen from the ons2-go2 container)"
   local nodes want t0; want="/pcd2depth_node /yolo_detector /mission_manager /map_server /pc_to_scan /sliding_map_node"
   [ "$ym" = gpu ] && want="$want /florence_cmd_relay /inspection_capture"
+  [ "$CLOUD" = 1 ] && want="$want /cloud_publisher"
   t0=$SECONDS   # the YOLO model loads slowly: wait up to 60 s for all nodes
   while :; do
     nodes=$(gros 'timeout 8 rosnode list'); miss=0
@@ -205,12 +213,20 @@ do_verify() {
   chk "YOLO debug image streams" gros 'timeout 20 rostopic echo -n1 /yolo_debug_image/compressed/header/seq'
   chk "/yolo/command list answers on /yolo/console" gros '(timeout 12 rostopic echo -n1 /yolo/console/data > /tmp/yc.txt &) ; sleep 2; rostopic pub -1 /yolo/command std_msgs/String "data: list" >/dev/null; sleep 6; test -s /tmp/yc.txt'
 
+  if [ "$CLOUD" = 1 ]; then
+    echo "== cloud_publisher (messages for the cloud side)"
+    chk "tmux window cloud" gros 'tmux list-windows -t ons2_go2 -F "#{window_name}" | grep -qx cloud'
+    local cout crc; cout=$(gros 'python3 $HOME/ons2/go2_agx/cloud/tests/verify_topics.py 30' 2>&1); crc=$?
+    sed 's/^/  /' <<< "$cout"
+    [ $crc = 0 ] && ok "cloud messages verified" || bad "cloud messages (exit $crc)"
+  fi
+
   if [ "${1:-}" = "--resilience" ]; then
     echo "== resilience: restart ONS2, the master and odin-agx must survive"
     local r1 r2 yflag="--with-yolo"; [ "$ym" = gpu ] && yflag="--with-yolo-agx"
     local s1 s2 rc; s1=$(gros 'tmux display-message -p "#{start_time}"' 2>/dev/null)
     r1=$(gros 'rosparam get /run_id'); g '~/ons2_docker/ons2_stop.sh' >/dev/null; sleep 3
-    g "~/ons2_docker/ons2_start.sh --map=$MAP $yflag" >/dev/null 2>&1; rc=$?
+    g "~/ons2_docker/ons2_start.sh --map=$MAP $yflag$CFLAG" >/dev/null 2>&1; rc=$?
     s2=$(gros 'tmux display-message -p "#{start_time}"' 2>/dev/null)
     [ $rc = 0 ] && [ -n "$s2" ] && [ "$s1" != "$s2" ] && ok "ONS2 really restarted (new tmux server, start exit 0)" || bad "ONS2 did NOT restart (exit $rc, tmux start $s1 -> $s2)"
     r2=$(gros 'rosparam get /run_id')

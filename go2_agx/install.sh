@@ -78,6 +78,7 @@ if [ $DO_ONS2 = 1 ]; then
   docker image inspect ons2:go2 >/dev/null 2>&1 || { echo "  image ons2:go2 missing: ./go2_agx/build_images.sh first"; exit 1; }
   if [ "$REPO" != "$HOME/ons2" ]; then
     rsync -a --exclude .git --exclude ros_ws/build --exclude ros_ws/devel --exclude ros_ws/install --exclude ros2_ws "$REPO/" ~/ons2/ && echo "  repo copied to ~/ons2"
+    c=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null) && [ -n "$c" ] && echo "$c" > ~/ons2/.stack_commit   # shown by cloud_publisher in odin.status.v1
   fi
   WL='nav_interfaces;ons2_bringup;map_planner;sliding_map;neupan_ros;mission_manager;atomic_move;yolo_ros;odin_vlm_terminal;fish2pinhole;pcd2pgm;pointcloud_saver;unitree_control'
   docker run --rm -u $(id -u):$(id -g) -e HOME=$HOME -v $HOME/ons2:$HOME/ons2 --entrypoint bash ons2:go2 -c \
