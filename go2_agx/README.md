@@ -172,7 +172,9 @@ The scripts expect these locations (they can be changed inside the scripts).
 3. Images: `./go2_agx/build_images.sh` builds all four in order: `odin-nav:drv0144` (`docker/Dockerfile.global` on
    `dustynv/ros:noetic-pytorch-l4t-r35.3.1`), `ons2:go2`, `odin-drv:0144` + `odin-yolo:0144`, `odin-gpu:go2`. It needs about 40 GB
    free and skips images that exist; `BASE_TAG=odin-nav:drv0144-rebuilt` builds a test copy. The base recipe was read from `docker history`
-   of the working image and has **not been test-built yet**. `ros1_bridge:go2` (optional bridge) is still from ONS1.
+   of the working image. On 27 Nov 2026 the base and `ons2:go2` were rebuilt from the repo on the Go2 and `test_stack.sh all` and
+   `verify --resilience` passed on them (run on the Go2 with `GO2_SSH=local`). Known differences from the older image: `scs` 3.3.2 (was
+   3.2.11), no `netifaces`; driving with the chassis was not compared yet. `odin-drv`, `odin-yolo` and `odin-gpu` were not rebuilt in that test. `ros1_bridge:go2` (optional bridge) is still from ONS1.
 
 **Jetson AGX Orin**
 1. `go2_agx/agx/*` in `~/odin_test/`; the `yolov5` submodule copied to `~/odin_test/yolo_gpu/yolov5`.
