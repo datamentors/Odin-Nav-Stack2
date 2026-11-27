@@ -9,6 +9,7 @@ rates_hz:
   yolo_max: 2.0               # upper limit; only sent when the list changes
   map_refresh_s: 60.0         # period, not a rate
   nav_refresh_s: 10.0
+  nav_active_refresh_s: 2.0   # while NAVIGATING (status arrives at 2 Hz)
   stack_refresh_s: 10.0
 max_objects: 50
 topics:

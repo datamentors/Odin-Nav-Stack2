@@ -5,6 +5,7 @@
 #   /cloud/status     odin.map.v1, odin.nav.v1, odin.stack.v1
 #   /cloud/events     odin.detections.florence.v1
 # Settings: config/cloud_publisher.yaml (rates per kind). Use:  rosrun ... cloud_publisher.py _config:=<yaml>
+import array
 import hashlib
 import json
 import math
@@ -36,6 +37,8 @@ class CloudPublisher:
         self.yolo_stamps = []
         self.class_names = {}
         self.speed = 0.0
+        self.tf_stamp = None
+        self.tf_changed = 0.0
         self.last = {"pose": 0.0, "yolo": 0.0, "map": 0.0, "nav": 0.0, "stack": 0.0}
         self.map_sha = None
         self.nav_sig = None
@@ -99,7 +102,7 @@ class CloudPublisher:
 
     def on_map(self, m):
         self.seen("map")
-        sha = hashlib.sha256(bytes(bytearray(v & 0xFF for v in m.data))).hexdigest()
+        sha = hashlib.sha256(array.array('b', m.data).tobytes()).hexdigest()
         o = m.info.origin
         self.map_msg = {
             "map": self.map_name,
@@ -179,9 +182,11 @@ class CloudPublisher:
             d = json.loads(m.data)
         except ValueError:
             return
+        if not isinstance(d, dict):
+            return
+        if time.time() - self.t0 < 2.0:
+            return  # the latched message from an earlier search arrives right at start
         stamp = float(d.get("stamp") or 0.0)
-        if 0 < stamp < self.t0 - 1.0:
-            return  # latched message from before this node started
         objs = [{
             "n": int(o["n"]), "name": str(o.get("name", "")), "label": str(o.get("label", "")),
             "distance_m": round(float(o.get("dist", 0.0)), 2), "direction": str(o.get("direction", "")),
@@ -196,7 +201,10 @@ class CloudPublisher:
         body = {"map": self.map_name, "relocalized": False, "speed": round(self.speed, 3)}
         try:
             tr = self.tfbuf.lookup_transform(c["map_frame"], c["base_frame"], rospy.Time(0))
-            age = max(0.0, (rospy.Time.now() - tr.header.stamp).to_sec())
+            stamp = tr.header.stamp.to_sec()
+            if stamp != self.tf_stamp:  # age = time since the TF last changed, on our clock (the stamp may be the Odin1 clock)
+                self.tf_stamp, self.tf_changed = stamp, time.time()
+            age = time.time() - self.tf_changed
             t = tr.transform
             body.update({"x": round(t.translation.x, 3), "y": round(t.translation.y, 3),
                          "yaw": round(yaw_of(t.rotation), 3), "tf_age_ms": round(age * 1000, 1),
@@ -226,7 +234,8 @@ class CloudPublisher:
                 self.pose()
             if self.map_msg and self.due("map", r["map_refresh_s"]):
                 self.send("status", "odin.map.v1", self.map_msg)
-            if self.nav_msg and self.due("nav", r["nav_refresh_s"]):
+            nav_period = r["nav_active_refresh_s"] if self.nav_msg and self.nav_msg["state"] == "NAVIGATING" else r["nav_refresh_s"]
+            if self.nav_msg and self.due("nav", nav_period):
                 self.send("status", "odin.nav.v1", self.nav_msg)
             if self.due("stack", r["stack_refresh_s"]):
                 self.stack()

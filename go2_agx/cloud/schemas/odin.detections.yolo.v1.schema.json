@@ -9,7 +9,7 @@
     "kind": {"const": "odin.detections.yolo.v1"},
     "seq": {"type": "integer", "minimum": 0},
     "t_robot": {"type": "number"},
-    "image_stamp": {"type": "number", "description": "Unix seconds of the camera frame"},
+    "image_stamp": {"type": "number", "description": "Camera frame time as stamped by the driver (may not be wall clock)"},
     "objects": {
       "type": "array",
       "maxItems": 50,

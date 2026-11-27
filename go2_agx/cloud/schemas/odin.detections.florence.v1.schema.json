@@ -11,7 +11,7 @@
     "t_robot": {"type": "number"},
     "phrase": {"type": "string"},
     "search_id": {"type": ["integer", "null"], "description": "seq of the search in the Florence service"},
-    "image_stamp": {"type": "number"},
+    "image_stamp": {"type": "number", "description": "Camera frame time as stamped by the driver (may not be wall clock)"},
     "objects": {
       "type": "array",
       "maxItems": 50,
