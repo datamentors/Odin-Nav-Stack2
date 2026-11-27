@@ -164,6 +164,18 @@ keeps up with the camera (~10 Hz, ~0.15 s latency, before ~4 Hz and ~0.3 s), wit
 
 The scripts expect these locations (they can be changed inside the scripts).
 
+**Go2 computer, quick path** (on the Go2, from a clone of this repository; no sudo):
+```bash
+./go2_agx/install.sh --check      # host check: JetPack 6, docker + nvidia runtime, disk, internet, Odin1, images, map
+./go2_agx/build_images.sh         # the images (about 40 GB, long)
+./go2_agx/install.sh --ons2 --engine   # submodules, scripts, network.env, YOLO folders + weights, ~/ons2 build, TensorRT engine
+```
+`install.sh` copies the scripts to `~/odin_test`, `~/ons2_docker` and `~/odin_nav_stack/drv0144`, creates `network.env` and
+`control_command_agx.yaml` if missing (never overwrites them), downloads the official YOLOv5l weights (`agx/yolo_trt/get_weights.sh`, checked by
+sha256) and can build the TensorRT engine inside `odin-gpu` (`agx/yolo_trt/build_engine.sh`, no TensorRT on the host). You still copy the map file
+yourself, and the optional watchdog needs sudo. `install.sh --check` was run on the Go2; the install, `--ons2` and `--engine` steps are written
+but **not tested yet**. The manual steps below are what it does.
+
 **Go2 computer**
 1. This repository at `~/ons2`, built inside the container as upstream describes.
 2. `go2_agx/go2/ons2_*.sh`, `remote_monitor_start.sh` and `Dockerfile` in `~/ons2_docker/`;
