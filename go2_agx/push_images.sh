@@ -36,7 +36,7 @@ for e in "${IMAGES[@]}"; do
   split "$e"
   if docker image inspect "$LOCAL" >/dev/null 2>&1; then
     arch=$(docker image inspect "$LOCAL" --format '{{.Architecture}}'); size=$(docker image inspect "$LOCAL" --format '{{.Size}}')
-    printf "  ok       %-16s %-6s %5.1f GB on disk  ->  %s\n" "$LOCAL" "$arch" "$(awk -v s="$size" 'BEGIN{print s/1e9}')" "$REMOTE"
+    printf "  ok       %-16s %-6s %5.1f GB to upload (compressed)  ->  %s\n" "$LOCAL" "$arch" "$(awk -v s="$size" 'BEGIN{print s/1e9}')" "$REMOTE"
     [ "$arch" = arm64 ] || { echo "           WARNING: expected arm64"; }
   else
     echo "  MISSING  $LOCAL (build it: ./go2_agx/build_images.sh)"; FAIL=1
