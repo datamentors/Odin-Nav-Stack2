@@ -1,0 +1,1 @@
+{"kind": "odin.map.v1", "seq": 3, "t_robot": 1795789200.0, "map": "restaurant_walls", "resolution_m": 0.05, "origin": {"x": -12.5, "y": -8.0, "yaw": 0.0}, "width": 520, "height": 340, "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "reloc_map": "restaurant.bin", "s3_key": null}

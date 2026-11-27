@@ -1,0 +1,1 @@
+{"kind": "odin.detections.yolo.v1", "seq": 560, "t_robot": 1795789202.5, "image_stamp": 1795789202.4, "objects": [{"class": "chair", "confidence": 0.87, "distance_m": 2.4, "bearing_deg": -12.0, "map_x": 5.1, "map_y": 0.4}, {"class": "person", "confidence": 0.74, "distance_m": 3.9, "bearing_deg": 20.5, "map_x": null, "map_y": null}]}

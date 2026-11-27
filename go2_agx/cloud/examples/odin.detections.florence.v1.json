@@ -1,0 +1,1 @@
+{"kind": "odin.detections.florence.v1", "seq": 4, "t_robot": 1795789210.0, "phrase": "chair", "search_id": 12, "image_stamp": 1795789207.7, "objects": [{"n": 1, "name": "chair 1", "label": "chair", "distance_m": 2.3, "direction": "ahead, slightly left"}, {"n": 2, "name": "chair 2", "label": "chair", "distance_m": 4.1, "direction": "right"}]}

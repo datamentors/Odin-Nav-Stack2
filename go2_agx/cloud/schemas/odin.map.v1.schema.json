@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "odin.map.v1",
+  "description": "The map in use. Status (retained), on change and every 60 s.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "seq", "t_robot", "map"],
+  "properties": {
+    "kind": {"const": "odin.map.v1"},
+    "seq": {"type": "integer", "minimum": 0},
+    "t_robot": {"type": "number"},
+    "map": {"type": "string", "minLength": 1},
+    "resolution_m": {"type": "number", "exclusiveMinimum": 0},
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "yaw"],
+      "properties": {
+        "x": {"type": "number"},
+        "y": {"type": "number"},
+        "yaw": {"type": "number"}
+      }
+    },
+    "width": {"type": "integer", "minimum": 1},
+    "height": {"type": "integer", "minimum": 1},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "reloc_map": {"type": ["string", "null"], "description": "Odin1 relocalization map file"},
+    "s3_key": {"type": ["string", "null"], "description": "Map image in S3 (later phase)"}
+  }
+}

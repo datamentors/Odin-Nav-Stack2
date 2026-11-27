@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "odin.pose.v1",
+  "description": "Robot pose on the navigation map (frame map). Telemetry, 2 Hz by default.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "seq", "t_robot", "map", "relocalized"],
+  "properties": {
+    "kind": {"const": "odin.pose.v1"},
+    "seq": {"type": "integer", "minimum": 0},
+    "t_robot": {"type": "number", "description": "Robot clock, unix seconds"},
+    "map": {"type": "string", "minLength": 1},
+    "relocalized": {"type": "boolean"},
+    "x": {"type": "number", "description": "m, map frame"},
+    "y": {"type": "number", "description": "m, map frame"},
+    "yaw": {"type": "number", "description": "rad, map frame"},
+    "tf_age_ms": {"type": "number", "minimum": 0},
+    "speed": {"type": "number", "minimum": 0, "description": "m/s"}
+  }
+}

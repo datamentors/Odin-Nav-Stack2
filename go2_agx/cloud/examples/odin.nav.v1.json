@@ -1,0 +1,1 @@
+{"kind": "odin.nav.v1", "seq": 17, "t_robot": 1795789201.0, "state": "NAVIGATING", "mission_id": "go_chair_1", "waypoint_idx": 0, "total_waypoints": 1, "goal": {"x": 5.1, "y": 0.4}, "distance_to_target_m": 1.9, "progress_percent": 38.0, "linear_vel": 0.12, "angular_vel": 0.0, "event": ""}

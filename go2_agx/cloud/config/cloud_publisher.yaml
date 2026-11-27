@@ -1,0 +1,25 @@
+# cloud_publisher settings. Rates are per message kind (Hz); 0 turns a kind off.
+map_name: ""                  # filled from the ONS2 map name at start (env ONS2_MAP)
+base_frame: odin1_base_link
+map_frame: map
+camera_frame: camera_link     # same as yolo_detector.py; YOLO 3D points are treated as being in this frame
+tf_max_age_s: 1.0             # older than this = not relocalized
+rates_hz:
+  pose: 2.0
+  yolo_max: 2.0               # upper limit; only sent when the list changes
+  map_refresh_s: 60.0         # period, not a rate
+  nav_refresh_s: 10.0
+  stack_refresh_s: 10.0
+max_objects: 50
+topics:
+  odometry: /odin1/odometry
+  map: /map
+  nav_status: /waypoint_manager/status
+  yolo_3d: /yolo_detections_3d
+  yolo_names: /yolo_class_names
+  florence: /florence/objects_3d
+out:
+  telemetry: /cloud/telemetry   # std_msgs/String JSON: pose, yolo
+  status: /cloud/status         # map, nav, stack (retained on the cloud side)
+  events: /cloud/events         # florence
+# Output topic names must match the String inputs of the Pulse cloud_gateway (to confirm in Phase 1, step 4).

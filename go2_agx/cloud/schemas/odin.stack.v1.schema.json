@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "odin.stack.v1",
+  "description": "Health of the Odin1 + ONS2 stack. Status (retained), every 10 s.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "seq", "t_robot", "inputs"],
+  "properties": {
+    "kind": {"const": "odin.stack.v1"},
+    "seq": {"type": "integer", "minimum": 0},
+    "t_robot": {"type": "number"},
+    "inputs": {
+      "type": "object",
+      "description": "Per input: seconds since the last message (null = never seen)",
+      "additionalProperties": {"type": ["number", "null"], "minimum": 0}
+    },
+    "yolo_hz": {"type": "number", "minimum": 0},
+    "images": {"type": "object", "additionalProperties": {"type": "string"}},
+    "commit": {"type": "string"}
+  }
+}

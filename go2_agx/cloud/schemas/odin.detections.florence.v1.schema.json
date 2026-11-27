@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "odin.detections.florence.v1",
+  "description": "One Florence-2 search (from /florence/objects_3d). Event, one per search.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "seq", "t_robot", "phrase", "objects"],
+  "properties": {
+    "kind": {"const": "odin.detections.florence.v1"},
+    "seq": {"type": "integer", "minimum": 0},
+    "t_robot": {"type": "number"},
+    "phrase": {"type": "string"},
+    "search_id": {"type": ["integer", "null"], "description": "seq of the search in the Florence service"},
+    "image_stamp": {"type": "number"},
+    "objects": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["n", "name"],
+        "properties": {
+          "n": {"type": "integer", "minimum": 1, "description": "F number (go F<n>)"},
+          "name": {"type": "string"},
+          "label": {"type": "string"},
+          "distance_m": {"type": "number", "minimum": 0},
+          "direction": {"type": "string"}
+        }
+      }
+    }
+  }
+}
