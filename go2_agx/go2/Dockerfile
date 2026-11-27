@@ -1,6 +1,6 @@
 # Odin-Nav-Stack2 for the Go2 dock Jetson (JetPack 6 host, ROS1 inside the container).
 # Image ons2:go2. Build from the REPOSITORY ROOT (COPY NeuPAN):  docker build -f go2_agx/go2/Dockerfile -t ons2:go2 .
-# Prerequisite: base image odin-nav:drv0144 from the earlier Odin-Nav-Stack (ONS1) Go2 setup (not in this repository).
+# Base image odin-nav:drv0144 = docker/Dockerfile.global on dustynv/ros:noetic-pytorch-l4t-r35.3.1; go2_agx/build_images.sh builds it first.
 # Base = our working ONS1 image (Ubuntu 20.04 + ROS Noetic + conda env "neupan" Python 3.10 + torch 2.1 + cvxpy/SCS).
 # The ONS2 repo (~/ons2) is MOUNTED at the same path at runtime and built there (ros_ws/devel), so the official
 # scripts (scripts/ons2_go2.sh ...) run unmodified paths. The old image odin-nav:drv0144 is untouched.

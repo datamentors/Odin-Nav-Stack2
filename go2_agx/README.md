@@ -169,8 +169,10 @@ The scripts expect these locations (they can be changed inside the scripts).
 2. `go2_agx/go2/ons2_*.sh`, `remote_monitor_start.sh` and `Dockerfile` in `~/ons2_docker/`;
    `start_odin_remote.sh`, `stop_odin_remote.sh`, `start_bridge.sh`, `stop_bridge.sh` and `fastdds_udp.xml` in
    `~/odin_nav_stack/drv0144/`.
-3. Images: `ons2:go2` (see `go2/Dockerfile`; it is built on `odin-nav:drv0144` from the earlier Odin-Nav-Stack (ONS1)
-   Go2 setup, which is not part of this repository). `ros1_bridge:go2` (also from ONS1) is only needed for the optional bridge.
+3. Images: `./go2_agx/build_images.sh` builds all four in order: `odin-nav:drv0144` (`docker/Dockerfile.global` on
+   `dustynv/ros:noetic-pytorch-l4t-r35.3.1`), `ons2:go2`, `odin-drv:0144` + `odin-yolo:0144`, `odin-gpu:go2`. It needs about 40 GB
+   free and skips images that exist; `BASE_TAG=odin-nav:drv0144-rebuilt` builds a test copy. The base recipe was read from `docker history`
+   of the working image and has **not been test-built yet**. `ros1_bridge:go2` (optional bridge) is still from ONS1.
 
 **Jetson AGX Orin**
 1. `go2_agx/agx/*` in `~/odin_test/`; the `yolov5` submodule copied to `~/odin_test/yolo_gpu/yolov5`.
