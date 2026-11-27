@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- UDP only (no shared memory) and large buffers for ~0.5 MB point clouds -->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>udp_big</transport_id>
+      <type>UDPv4</type>
+      <sendBufferSize>33554432</sendBufferSize>
+      <receiveBufferSize>33554432</receiveBufferSize>
+    </transport_descriptor>
+  </transport_descriptors>
+  <participant profile_name="udp_only" is_default_profile="true">
+    <rtps>
+      <userTransports><transport_id>udp_big</transport_id></userTransports>
+      <useBuiltinTransports>false</useBuiltinTransports>
+    </rtps>
+  </participant>
+</profiles>

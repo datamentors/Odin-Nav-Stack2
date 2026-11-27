@@ -22,7 +22,18 @@
 
 Tests (no ROS needed): `python3 tests/test_logic.py` (helpers in `cloud_logic.py`); `python3 tests/test_examples.py` and `python3 tests/test_node.py` (need `jsonschema` and `pyyaml`). `test_node.py` runs the node with fake ROS modules and checks every message it publishes against the envelope, its payload schema, its topic and the size.
 
-Run the node (inside the ons2-go2 container, ROS sourced, nav_interfaces built):
-`python3 cloud_publisher.py _config:=config/cloud_publisher.yaml`
+## Run it on the Go2 (stack running)
+
+```
+./start_cloud.sh      # 1. cloud_publisher in ons2-go2  2. ROS 1 -> ROS 2 bridge (odin-bridge)  3. Pulse runtime (odin-pulse-cloud)
+./test_phase1.sh      # read-only check up to the gateway's ROS 2 inputs and its published counter
+./stop_cloud.sh       # stops the runtime and the node (the bridge keeps running; --with-bridge stops it too)
+```
+
+- `profile/pulse.yaml`: the Pulse profile, comms only (no control adapter, no teleop, command dispatch off), copied from the Go2 profile. `broker_type: mock` for now. Mounted at `/etc/ardia` in the container `odin-pulse-cloud` (image `ardia/pulse-runtime:dev`).
+- DDS: FastRTPS, domain 42, UDP only (`profile/dds/fastdds_udp.xml`), the same as the bridge. The Go2's own Pulse runtime uses CycloneDDS on domain 0, so the two do not see each other.
+- The identity is shared with the Go2 runtime. With a real broker, `start_cloud.sh` refuses to start while `ardia-pulse-runtime` is running.
+- The mock broker keeps no readable log: `test_phase1.sh` checks the messages the gateway receives and its `outbound_published_count`. The real MQTT output is checked in Phase 3.
+- The node alone, inside ons2-go2: `python3 cloud_publisher.py _config:=config/cloud_publisher.yaml`
 
 Seen on the robot (27 Nov 2026, before the envelope and merged status): pose, YOLO, map, nav `IDLE`, stack and Florence. Not tested: the new envelope on the robot, the bridge to ROS 2, the gateway, `NAVIGATING`.
