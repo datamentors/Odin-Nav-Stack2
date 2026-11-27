@@ -15,7 +15,7 @@ from boxmot.reid.core.runtime import ReID  # noqa: E402
 
 rt = ReID(w, device="cuda", half=False)
 model = next(m for m in (getattr(rt.model, "model", None), rt.model) if isinstance(m, torch.nn.Module)).eval()
-h, wd = getattr(rt.model, "input_shape", (256, 128))[-2:] if hasattr(rt.model, "input_shape") else (256, 128)
+h, wd = getattr(rt.model, "input_shape", (256, 128))[-2:]
 x = torch.zeros(1, 3, h, wd, device="cuda")
 with torch.no_grad():
     print("features", tuple(model(x).shape))

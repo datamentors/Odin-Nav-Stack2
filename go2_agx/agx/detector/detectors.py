@@ -2,10 +2,13 @@
 """Light per-frame object detectors for the GPU detector service (detector_service.py), one interface for all:
 
     det = make_detector("yolov5" | "rfdetr" | "yoloe", weights)
-    boxes, scores, cls = det.detect(img_bgr, conf)     # boxes N x 4 (x1, y1, x2, y2) in img pixels, scores N, cls N (int)
-                                                       # a segmentation model may return a 4th item: masks N x h x w (bool)
+    boxes, scores, cls, masks = det.detect(img_bgr, conf)
+        boxes N x 4 (x1, y1, x2, y2) in img pixels, scores N, cls N (int),
+        masks None (box detectors) or N bool masks of the image size (segmentation models: YOLOE)
     det.names        {cls id: name}
     det.input_size   longest side the model works at (the ROS node sends images about that size, not the 1600 px original)
+                     When the node sends a smaller image (scale_percent), YOLOv5 and YOLOE run at that smaller size
+                     (rounded up to a multiple of 32) instead of upscaling it; RF-DETR's engine has a fixed size.
     det.desc         one line for logs / /health
     det.open_vocab   True when det.set_classes(["chair", "fire extinguisher", ...]) can change what it looks for (YOLOE)
 
@@ -28,7 +31,13 @@ import cv2
 import numpy as np
 
 HOME = os.path.expanduser("~")
+MODELS = os.environ.get("ODIN_MODELS", os.path.join(HOME, "odin_test/models"))   # get_models.sh writes here
 JETPACK_PY = "/usr/lib/python3.10/dist-packages"   # JetPack's tensorrt bindings (appended last: the venv still wins)
+
+
+def add_jetpack_path():
+    if JETPACK_PY not in sys.path:
+        sys.path.append(JETPACK_PY)
 
 COCO80 = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
           "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
@@ -51,8 +60,7 @@ class TRTEngine:
     """TensorRT engine with one input, run on torch CUDA tensors: engine(x) -> {output name: tensor}."""
 
     def __init__(self, path):
-        if JETPACK_PY not in sys.path:
-            sys.path.append(JETPACK_PY)
+        add_jetpack_path()
         import tensorrt as trt
         import torch
         self.torch, self.dev = torch, torch.device("cuda:0")
@@ -83,6 +91,13 @@ class TRTEngine:
             raise RuntimeError("TensorRT execution failed")
         self.stream.synchronize()                                       # outputs complete before anyone reads them
         return out
+
+
+def model_size(img, max_size, stride=32, min_size=256):
+    """Longest side the model should run at for this image: its size rounded up to the stride, never upscaled past
+    max_size (so a downsampled image really runs faster), never below min_size (TensorRT engine minimum)."""
+    side = int(np.ceil(max(img.shape[:2]) / float(stride)) * stride)
+    return int(min(max_size, max(min_size, side)))
 
 
 def letterbox(img, size=640, stride=32, color=(114, 114, 114)):
@@ -148,9 +163,8 @@ class YOLOv5(Detector):
 
     def detect(self, img, conf):
         torch = self.torch
-        lb, r, (px, py) = letterbox(img, self.input_size)
-        x = torch.from_numpy(np.ascontiguousarray(lb[:, :, ::-1].transpose(2, 0, 1))).to(self.dev)  # BGR->RGB, CHW
-        x = x.unsqueeze(0).float() / 255.0
+        lb, r, (px, py) = letterbox(img, model_size(img, self.input_size))
+        x = torch.from_numpy(lb).to(self.dev)[..., [2, 1, 0]].permute(2, 0, 1).unsqueeze(0).float() / 255.0  # BGR->RGB, CHW
         with torch.no_grad():
             p = self.run(x)[0]                                  # N x (4 box + 1 obj + classes)
             score, cls = (p[:, 5:] * p[:, 4:5]).max(1)          # same as YOLOv5 non_max_suppression, single label
@@ -163,7 +177,7 @@ class YOLOv5(Detector):
         boxes = (boxes - [px, py, px, py]) / r
         h, w = img.shape[:2]
         boxes = np.clip(boxes, 0, [w, h, w, h])
-        return boxes.astype(np.float32), score.astype(np.float32), cls.astype(np.int64)
+        return boxes.astype(np.float32), score.astype(np.float32), cls.astype(np.int64), None
 
 
 class RFDETR(Detector):
@@ -220,7 +234,8 @@ class RFDETR(Detector):
         cx, cy, bw, bh = [dets[q, i] for i in range(4)]
         boxes = np.stack([(cx - bw / 2) * w, (cy - bh / 2) * h, (cx + bw / 2) * w, (cy + bh / 2) * h], 1)
         keep = np.isin(c, COCO91_IDS)   # slots without a COCO class (unused ids) are never reported
-        return boxes.reshape(-1, 4)[keep].astype(np.float32), flat[idx][keep].astype(np.float32), c[keep].astype(np.int64)
+        return (boxes.reshape(-1, 4)[keep].astype(np.float32), flat[idx][keep].astype(np.float32),
+                c[keep].astype(np.int64), None)
 
 
 class YOLOE(Detector):
@@ -238,6 +253,8 @@ class YOLOE(Detector):
         self.lock = threading.Lock()   # set_classes and predict must not overlap
         self.half = torch.cuda.is_available()
         self.dir = os.path.dirname(os.path.abspath(weights))
+        from ultralytics.utils import SETTINGS
+        SETTINGS.update({"weights_dir": self.dir})   # Ultralytics finds the text encoder (mobileclip_blt.ts) there
         self.m = _YOLOE(weights)
         self.prompt_free = "-pf" in os.path.basename(weights)
         self.input_size = int(os.environ.get("YOLOE_IMGSZ", "640"))
@@ -259,49 +276,38 @@ class YOLOE(Detector):
         names = [str(n).strip() for n in names if str(n).strip()]
         if not names:
             raise ValueError("no class names")
-        cwd = os.getcwd()
         with self.lock:
-            os.chdir(self.dir)   # Ultralytics finds the text encoder (mobileclip_blt.ts) in the working directory
-            try:
-                self.m.set_classes(names, self.m.get_text_pe(names))
-            finally:
-                os.chdir(cwd)
+            self.m.set_classes(names, self.m.get_text_pe(names))
             self.names = {i: n for i, n in enumerate(names)}
         self._warm()
         return self.names
 
     def detect(self, img, conf):
         with self.lock:
-            r = self.m.predict(img, conf=conf, imgsz=self.input_size, half=self.half, retina_masks=True, verbose=False)[0]
+            r = self.m.predict(img, conf=conf, imgsz=model_size(img, self.input_size, min_size=160), half=self.half,
+                               retina_masks=True, verbose=False)[0]
         b = r.boxes
         boxes, scores, cls = b.xyxy.cpu().numpy(), b.conf.cpu().numpy(), b.cls.cpu().numpy().astype(np.int64)
-        masks = r.masks.data.cpu().numpy().astype(bool) if r.masks is not None else [None] * len(boxes)
+        masks = r.masks.data.bool().cpu().numpy() if r.masks is not None else None
         return boxes.astype(np.float32), scores.astype(np.float32), cls, masks
 
 
 DETECTORS = {"yolov5": YOLOv5, "rfdetr": RFDETR, "yoloe": YOLOE}
 
 
-def default_weights(kind):
-    """Candidate weights in order; the service uses the first one that exists and loads."""
-    if kind == "yolov5":
-        return [os.path.join(HOME, "odin_test/yolo_trt/yolov5l_fp16.engine"),
-                os.path.join(HOME, "odin_test/yolo/ros_ws/src/yolo_ros/scripts/models/yolov5l.pt")]
-    if kind == "rfdetr":
-        return [os.path.join(HOME, "odin_test/models/rfdetr_large_fp16.engine"),
-                os.path.join(HOME, "odin_test/models/rfdetr_medium_fp16.engine")]
-    if kind == "yoloe":
-        return [os.path.join(HOME, "odin_test/models/yoloe-11l-seg.pt"),
-                os.path.join(HOME, "odin_test/models/yoloe-11m-seg.pt"),
-                os.path.join(HOME, "odin_test/models/yoloe-11s-seg.pt")]
-    raise ValueError("unknown detector %r (choose from %s)" % (kind, ", ".join(DETECTORS)))
+DEFAULT_WEIGHTS = {   # candidates in order; the service uses the first one that exists and loads
+    "yolov5": [os.path.join(HOME, "odin_test/yolo_trt/yolov5l_fp16.engine"),
+               os.path.join(HOME, "odin_test/yolo/ros_ws/src/yolo_ros/scripts/models/yolov5l.pt")],
+    "rfdetr": [os.path.join(MODELS, "rfdetr_large_fp16.engine"), os.path.join(MODELS, "rfdetr_medium_fp16.engine")],
+    "yoloe": [os.path.join(MODELS, "yoloe-11%s-seg.pt" % v) for v in ("l", "m", "s")],
+}
 
 
 def make_detector(kind, weights=None, log=print):
-    """weights: a path, a comma-separated list of fallbacks, or None for default_weights(kind)."""
+    """weights: a path, a comma-separated list of fallbacks, or None for DEFAULT_WEIGHTS[kind]."""
     if kind not in DETECTORS:
         raise ValueError("unknown detector %r (choose from %s)" % (kind, ", ".join(DETECTORS)))
-    cands = [os.path.expanduser(w.strip()) for w in weights.split(",")] if weights else default_weights(kind)
+    cands = [os.path.expanduser(w.strip()) for w in weights.split(",")] if weights else DEFAULT_WEIGHTS[kind]
     errors = []
     for w in cands:
         if not os.path.exists(w):

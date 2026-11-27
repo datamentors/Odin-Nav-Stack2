@@ -52,6 +52,6 @@ case "${1:-}" in
       if [ ! -f $M/$f ]; then curl -fL --retry 3 -o $M/$f.part $A/$f && mv $M/$f.part $M/$f; fi
       echo "OK $M/$f"
     done ;;
-  *) sed -n 2,9p "$0"; exit 1 ;;
+  *) grep '^#   ' "$0"; exit 1 ;;
 esac
 own 2>/dev/null || true

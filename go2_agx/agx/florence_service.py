@@ -215,12 +215,6 @@ def find(phrase, img_path=None):
     return txt if shown else txt + "\n(annotated image not published: frame server :8730 not running)"
 
 
-def _inter(a, b):
-    w = min(a["x1"], b["x1"]) - max(a["x0"], b["x0"])
-    h = min(a["y1"], b["y1"]) - max(a["y0"], b["y0"])
-    return max(0.0, w) * max(0.0, h)
-
-
 def _yolo_names():
     try:
         return {v.lower(): int(k) for k, v in json.loads(urllib.request.urlopen(YOLO_URL + "/names", timeout=3).read()).items()}

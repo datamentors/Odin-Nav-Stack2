@@ -19,21 +19,29 @@ def load_intrinsics(path="/calib.yaml"):
     return {"fx": g("A11"), "fy": g("A22"), "cx": g("u0"), "cy": g("v0"), "skew": g("A12")}
 
 
-def depth_to_m(img, encoding):
-    """sensor_msgs/Image data (already as numpy) -> float32 metres."""
-    d = img.astype(np.float32)
-    return d / 1000.0 if encoding in ("16UC1", "mono16") else d
+def units_of(encoding):
+    """Metres per pixel unit of a sensor_msgs/Image depth encoding (16UC1 / mono16 are millimetres)."""
+    return 0.001 if encoding in ("16UC1", "mono16") else 1.0
 
 
-def box_depth(depth, box, percentile=20.0, min_pts=20, small_min_pts=5, small_area=4000):
+def nearest(items, stamp):
+    """(stamp, msg) items -> the item closest in time to stamp (None if empty; stamp <= 0 = the newest)."""
+    items = list(items)
+    if not items:
+        return None
+    return max(items, key=lambda it: it[0]) if stamp <= 0 else min(items, key=lambda it: abs(it[0] - stamp))
+
+
+def box_depth(depth, box, percentile=20.0, units=1.0, min_pts=20, small_min_pts=5, small_area=4000):
     """Depth (m) of the object in box (x1, y1, x2, y2, pixels of the depth image) or None when the lidar has too few
-    points on it (small/far boxes may pass with small_min_pts)."""
+    points on it (small/far boxes may pass with small_min_pts). depth: the raw image (units = metres per unit); only
+    the box is converted."""
     h, w = depth.shape[:2]
     x0, y0, x1, y1 = box
     bw, bh = x1 - x0, y1 - y0
     xa, xb = int(np.clip(x0 + 0.1 * bw, 0, w - 1)), int(np.clip(x1 - 0.1 * bw, 1, w))
     ya, yb = int(np.clip(y0 + 0.1 * bh, 0, h - 1)), int(np.clip(y1 - 0.1 * bh, 1, h))
-    v = depth[ya:yb, xa:xb]
+    v = depth[ya:yb, xa:xb].astype(np.float32) * units
     v = v[np.isfinite(v) & (v > 0.15) & (v < 40.0)]
     if v.size < (min_pts if bw * bh > small_area else small_min_pts):
         return None
@@ -47,9 +55,14 @@ def unproject(K, u, v, z):
     return float(mx * z), float(my * z), float(z)
 
 
-def box_to_3d(K, depth, box, percentile=20.0):
+def box_to_3d(K, depth, box, percentile=20.0, units=1.0):
     """Box -> (x, y, z) of its centre ray at the object's depth, or None."""
-    z = box_depth(depth, box, percentile)
+    z = box_depth(depth, box, percentile, units)
     if z is None:
         return None
     return unproject(K, (box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0, z)
+
+
+def box_size_m(K, box, z):
+    """Metric (width, height) of a box at depth z."""
+    return (box[2] - box[0]) * z / K["fx"], (box[3] - box[1]) * z / K["fy"]

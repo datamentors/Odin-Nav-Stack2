@@ -588,31 +588,36 @@ def main():
             if low in ("reset", "clear", "reset all", "cancel all", "clear all"):
                 reset_all(cmd)
                 return
-            if parts[0] == "find" and len(parts) > 1:   # open-vocabulary detector: answer on /yolo/console
-                query_pub.publish(String(data=cmd.split(None, 1)[1]))
-                say("> %s\nAsked the detector to look for: %s (works with DETECTOR=yoloe)" % (cmd, cmd.split(None, 1)[1]))
+            arg = cmd.split(None, 1)[1] if len(parts) > 1 else ""
+            if parts[0] == "find" and arg:   # open-vocabulary detector: answer on /yolo/console
+                query_pub.publish(String(data=arg))
+                say("> %s\nAsked the detector to look for: %s (works with DETECTOR=yoloe)" % (cmd, arg))
                 return
-            if parts[0] in ("track", "untrack"):
-                if parts[0] == "untrack":
-                    select_pub.publish(String(data=json.dumps({"clear": True})))
-                    say("> %s\nTracking target cleared." % cmd)
-                elif len(parts) == 2 and parts[1].isdigit():
+            if parts[0] == "untrack":
+                select_pub.publish(String(data=json.dumps({"clear": True})))
+                say("> %s\nTracking target cleared." % cmd)
+                return
+            if parts[0] == "track":
+                if not arg:
+                    say("> %s\nUse: track N (a number of the last 'list') | track <class> | untrack" % cmd)
+                elif not arg.isdigit():
+                    select_pub.publish(String(data=json.dumps({"name": arg})))
+                    say("> %s\nAsked the tracker to follow the most confident %s." % (cmd, arg))
+                else:
                     # "list" numbers come from /yolo_detections_3d (no 2D box): find the same object in the GPU
                     # detector's /perception/objects by class and camera-frame position, and send its box + stamp
-                    o = next((x for x in numbered if x["n"] == int(parts[1])), None)
-                    po = perception["last"]
-                    cands = [q for q in (po or {}).get("objects", []) if o and q["xyz"] and q["name"] == o["cls"]]
-                    best = min(cands, key=lambda q: math.dist(q["xyz"], o["cam"])) if cands else None
+                    o = next((x for x in numbered if x["n"] == int(arg)), None)
                     if o is None:
-                        say("> %s\nNo #%s in the last 'list'." % (cmd, parts[1]))
-                    elif best is None or math.dist(best["xyz"], o["cam"]) > 0.5:
-                        say("> %s\n#%s is not in the GPU detector's output (needs start_yolo_gpu_agx.sh with a tracker)." % (cmd, parts[1]))
+                        say("> %s\nNo #%s in the last 'list'." % (cmd, arg))
+                        return
+                    po = perception["last"] or {}
+                    near = [(math.dist(q["xyz"], o["cam"]), q) for q in po.get("objects", []) if q["xyz"] and q["name"] == o["cls"]]
+                    d, best = min(near, key=lambda dq: dq[0]) if near else (None, None)
+                    if best is None or d > 0.5:
+                        say("> %s\n#%s is not in the GPU detector's output (needs start_yolo_gpu_agx.sh with a tracker)." % (cmd, arg))
                     else:
                         select_pub.publish(String(data=json.dumps({"box": best["box"], "stamp": po["stamp"], "name": o["cls"]})))
-                        say("> %s\nAsked the tracker to follow #%s %s (answer on this console)." % (cmd, parts[1], o["cls"]))
-                elif len(parts) >= 2:
-                    select_pub.publish(String(data=json.dumps({"name": cmd.split(None, 1)[1]})))
-                    say("> %s\nAsked the tracker to follow the most confident %s." % (cmd, cmd.split(None, 1)[1]))
+                        say("> %s\nAsked the tracker to follow #%s %s (answer on this console)." % (cmd, arg, o["cls"]))
                 return
             if low in ("forget", "forget florence", "clear florence"):
                 n = len(flo["objs"]); flo["objs"] = []

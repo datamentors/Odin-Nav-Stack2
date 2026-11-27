@@ -18,19 +18,20 @@ Two kinds (trk.prompted):
   iou           greedy IoU association per class, no dependencies (default for tracking)
   botsort       BoT-SORT with camera-motion compensation (BoxMOT, AGPL-3.0: check before product use)
   botsort_reid  BoT-SORT + OSNet x0.25 appearance embeddings (TensorRT engine from export_reid.py)
-  sam2          SAM 2.1 (tiny by default) on a box prompt. Uses the streaming "camera predictor" when the installed
+  sam2          SAM 2.1 (tiny by default) on a box prompt. Its cost is set by SAM2_IMAGE_SIZE (default 512, the size SAM 2
+                works at whatever image it gets; 384 or 256 run faster with coarser masks) and SAM2_MODEL (tiny | small). Uses the streaming "camera predictor" when the installed
                 sam2 package has it (build_sam2_camera_predictor), otherwise the official image predictor with the
                 previous box as prompt (no memory: may drift in crowds; the target is dropped when the mask is lost)
 
 Ported from the detector benchmark (go2_rf_detr_bench branch: detbench/reid_track.py, sam2_track.py).
 """
+import contextlib
 import os
-import sys
 
+import cv2
 import numpy as np
 
-HOME = os.path.expanduser("~")
-MODELS = os.environ.get("ODIN_MODELS", os.path.join(HOME, "odin_test/models"))
+from detectors import MODELS, add_jetpack_path
 
 
 def iou_matrix(a, b):
@@ -49,9 +50,14 @@ def iou_matrix(a, b):
 
 class Tracker:
     name = "none"
+    has_target = True     # prompted trackers: False once the object is lost (the service then drops the target)
     prompted = False     # True: follows one object given by start(); False: tracks every detection
     keeps_frames = False  # True: the service keeps recent frames so start() can use the frame of an old box
     det_conf = None       # detector threshold the tracker wants (BoT-SORT also uses low-score boxes); None = same
+
+    @property
+    def desc(self):
+        return self.name
 
     def update(self, img, boxes, scores, cls):
         return np.full(len(boxes), -1, np.int64), []
@@ -126,8 +132,7 @@ class BotSortTracker(Tracker):
             if not os.path.exists(w):
                 raise RuntimeError("Re-ID engine %s missing: build it with detector/export_reid.py" % w)
             # JetPack's TensorRT is not on PyPI: skip BoxMOT's pip check for 'nvidia-tensorrt'
-            if "/usr/lib/python3.10/dist-packages" not in sys.path:
-                sys.path.append("/usr/lib/python3.10/dist-packages")
+            add_jetpack_path()
             import boxmot.reid.backends.tensorrt_backend as trt_backend
             trt_backend.require_reid_backend_requirements = lambda *a, **k: ()
             return ReIDConfig(os.path.abspath(w), device="cuda", precision="fp32")   # engine I/O is fp32 (fp16 inside)
@@ -175,49 +180,57 @@ class SAM2Tracker(Tracker):
             self.cam = None
             self.img_pred, mode = SAM2ImagePredictor(bs.build_sam2(cfg, ckpt, device="cuda", hydra_overrides_extra=over)), \
                 "image predictor, box propagation"
-        self.desc = "SAM 2.1 %s @%d (%s)" % (model, image_size, mode)
+        self._desc = "SAM 2.1 %s @%d (%s)" % (model, image_size, mode)
         self.max_lost, self.min_score = max_lost, min_score
         self.next_id = 0
         self.reset()
 
+    @property
+    def desc(self):
+        return self._desc
+
+    @property
+    def has_target(self):
+        return self.obj is not None
+
     def reset(self):
         self.obj = None   # {"id", "box", "cls", "lost"}
 
+    @contextlib.contextmanager
     def _ctx(self):
-        torch = self.torch
-        return torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16)
+        with self.torch.inference_mode(), self.torch.autocast("cuda", dtype=self.torch.bfloat16):
+            yield
 
     def start(self, img, box, cls=-1):
         self.next_id += 1
-        self.obj = {"id": self.next_id, "box": [float(v) for v in box], "cls": int(cls), "lost": 0, "score": 1.0}
+        self.obj = {"id": self.next_id, "box": [float(v) for v in box], "cls": int(cls), "lost": 0}
         if self.cam is not None:
-            a, b = self._ctx()
-            with a, b:
-                self.cam.load_first_frame(img[:, :, ::-1].copy())
+            with self._ctx():
+                self.cam.load_first_frame(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
                 self.cam.add_new_prompt(frame_idx=0, obj_id=1,
                                         bbox=np.array([box[:2], box[2:]], np.float32))
         return self.next_id
 
     @staticmethod
     def _mask_box(mask):
-        ys, xs = np.nonzero(mask)
-        return [float(xs.min()), float(ys.min()), float(xs.max()), float(ys.max())] if len(xs) else None
+        cols, rows = np.flatnonzero(mask.any(0)), np.flatnonzero(mask.any(1))
+        return [float(cols[0]), float(rows[0]), float(cols[-1]), float(rows[-1])] if len(cols) else None
 
     def update(self, img, boxes, scores, cls):
         none = np.full(len(boxes), -1, np.int64)
         o = self.obj
         if o is None:
             return none, []
-        a, b = self._ctx()
-        with a, b:
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        with self._ctx():
             if self.cam is not None:
-                _, logits = self.cam.track(img[:, :, ::-1].copy())
+                _, logits = self.cam.track(rgb)
                 mask = (logits[0, 0] > 0).cpu().numpy()
                 score = 1.0
             else:
                 x1, y1, x2, y2 = o["box"]
                 mx, my = 0.1 * (x2 - x1), 0.1 * (y2 - y1)   # a little room: the object moved since the last frame
-                self.img_pred.set_image(img[:, :, ::-1].copy())
+                self.img_pred.set_image(rgb)
                 masks, sc, _ = self.img_pred.predict(box=np.array([x1 - mx, y1 - my, x2 + mx, y2 + my], np.float32),
                                                      multimask_output=False)
                 mask, score = masks[0] > 0, float(sc[0])
@@ -227,20 +240,21 @@ class SAM2Tracker(Tracker):
             if o["lost"] > self.max_lost:
                 self.obj = None
             return none, []
-        o.update(box=nb, lost=0, score=score)
+        o.update(box=nb, lost=0)
         return none, [{"id": o["id"], "box": nb, "score": score, "cls": o["cls"], "mask": mask}]
 
 
-TRACKERS = ("none", "iou", "botsort", "botsort_reid", "sam2")
+TRACKERS = {
+    "none": Tracker,
+    "iou": IoUTracker,
+    "botsort": lambda: BotSortTracker(reid=False),
+    "botsort_reid": lambda: BotSortTracker(reid=True),
+    "sam2": SAM2Tracker,
+}
 
 
 def make_tracker(kind):
-    if kind in ("", "none", None):
-        return Tracker()
-    if kind == "iou":
-        return IoUTracker()
-    if kind in ("botsort", "botsort_reid"):
-        return BotSortTracker(reid=kind == "botsort_reid")
-    if kind == "sam2":
-        return SAM2Tracker()
-    raise ValueError("unknown tracker %r (choose from %s)" % (kind, ", ".join(TRACKERS)))
+    kind = kind or "none"
+    if kind not in TRACKERS:
+        raise ValueError("unknown tracker %r (choose from %s)" % (kind, ", ".join(TRACKERS)))
+    return TRACKERS[kind]()

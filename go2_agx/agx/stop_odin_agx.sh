@@ -13,7 +13,7 @@ case "${1:-driver}" in
   depth)      agx_stop_proc driver; agx_stop_proc cam; agx_stop_proc depth ;;
   perception) agx_stop_proc driver; agx_stop_proc cam; agx_stop_proc capture; agx_stop_proc relay; gpu_stop_proc florence; pkill -f "[f]lorence_service.py" ;;
   all)        docker rm -f $AGX_CTR $GPU_CTR >/dev/null 2>&1; pkill -f "[f]lorence_service.py"
-              pkill -f "odin_test/(detector/detector_service|yolo_gpu/yolo_gpu_service|yolo_trt/yolo_trt_service)[.]py" ;;
+              pkill -f "$DET_SVC_PAT" ;;
   *) echo "usage: $0 [driver|depth|perception|all]"; exit 1 ;;
 esac
 echo "Stopped."

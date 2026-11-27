@@ -85,6 +85,8 @@ agx_age()    { docker exec $AGX_CTR bash -c 'echo $(( $(date +%s) - $(stat -c %Y
 GPU_CTR=${GPU_CTR:-odin-gpu}
 GPU_IMAGE=${GPU_IMAGE:-odin-gpu:go2}
 GPU_LOGS=$D/logs/gpu
+DET_PORT=8750   # the GPU detector service (detector/detector_service.py, process yolosvc)
+DET_SVC_PAT="odin_test/(detector/detector_service|yolo_gpu/yolo_gpu_service|yolo_trt/yolo_trt_service)[.]py"   # + the pre-detector services
 gpu_in_container() {
   case "${GPU_MODE:-auto}" in container) return 0 ;; host) return 1 ;; *) docker image inspect $GPU_IMAGE >/dev/null 2>&1 ;; esac
 }

@@ -53,22 +53,18 @@ rospy.Subscriber("/yolo_class_names", String,
 
 
 def depth_at(stamp, snap=()):
-    """Lidar depth image closest in time to the photo (stamp in s; 0 = latest). snap = the depth images held when the
-    command arrived (the photo is taken right then; a far search lasts ~12 s, longer than depth_buf keeps)."""
-    items = {id(m): (st, m) for st, m in list(snap) + list(depth_buf)}.values()
-    items = sorted(items, key=lambda it: it[0])
-    if not items:
-        return None, None
-    if stamp <= 0:
-        st, m = items[-1]
-    else:
-        st, m = min(items, key=lambda it: abs(it[0] - stamp))
-    return depth3d.depth_to_m(bridge.imgmsg_to_cv2(m, desired_encoding="passthrough"), m.encoding), st
+    """Lidar depth image closest in time to the photo (stamp in s; 0 = latest) -> (raw image, metres per unit, its stamp).
+    snap = the depth images held when the command arrived (the photo is taken right then; a far search lasts ~12 s,
+    longer than depth_buf keeps)."""
+    it = depth3d.nearest({id(m): (st, m) for st, m in list(snap) + list(depth_buf)}.values(), stamp)
+    if it is None:
+        return None, 1.0, None
+    st, m = it
+    return bridge.imgmsg_to_cv2(m, desired_encoding="passthrough"), depth3d.units_of(m.encoding), st
 
 
-def object_3d(depth, o):
-    """Same as the GPU detector (depth3d.py): 20th percentile of the lidar depth in the box shrunk 10 %, pinhole unprojection."""
-    return depth3d.box_to_3d(K, depth, (o["x0"], o["y0"], o["x1"], o["y1"]))
+def box_of(o):
+    return [o["x0"], o["y0"], o["x1"], o["y1"]]
 
 
 def publish_3d(snap=()):
@@ -77,24 +73,24 @@ def publish_3d(snap=()):
         return "\n(3D: no calibration, objects not saved on the map)"
     last = json.loads(urllib.request.urlopen(SERVICE + "/last", timeout=5).read())
     stamp = (last.get("stamp_ns") or 0) / 1e9
-    depth, dst = depth_at(stamp, snap)
+    depth, units, dst = depth_at(stamp, snap)
     if depth is None:
         return "\n(3D: no lidar depth image yet: start_depth_agx.sh)"
     if depth.shape[1] != last.get("width") or depth.shape[0] != last.get("height"):
         return "\n(3D: depth %dx%d does not match the photo %sx%s)" % (depth.shape[1], depth.shape[0],
                                                                       last.get("width"), last.get("height"))
     out, lines = [], []
-    state["boxes"] = {o["n"]: (o["name"], [o["x0"], o["y0"], o["x1"], o["y1"]]) for o in last.get("objects", [])}
+    state["boxes"] = {o["n"]: (o["name"], box_of(o)) for o in last.get("objects", [])}
     state["stamp"] = stamp
     for o in last.get("objects", []):
-        p = object_3d(depth, o)
+        p = depth3d.box_to_3d(K, depth, box_of(o), units=units)   # same method as the GPU detector
         if p is None:
             lines.append("  #%d %s: no lidar points on it (too small/far): not saved" % (o["n"], o["name"]))
             continue
         x, y, z = p
         dist = math.hypot(x, z)
         out.append({"n": o["n"], "name": o["name"], "label": o["label"], "x": x, "y": y, "z": z, "dist": dist,
-                    "direction": o.get("direction", ""), "box": [o["x0"], o["y0"], o["x1"], o["y1"]]})
+                    "direction": o.get("direction", ""), "box": box_of(o)})
         lines.append("  #%d %-16s %5.2f m  %s" % (o["n"], o["name"], dist, o.get("direction", "")))
     msg = {"phrase": last.get("phrase"), "seq": last.get("seq"), "stamp": stamp if stamp > 0 else dst,
            "frame": "camera_link", "objects": out}
