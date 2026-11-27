@@ -1,4 +1,5 @@
 """Pure helpers of cloud_publisher (no ROS import, so they can be tested anywhere)."""
+import datetime
 import json
 import math
 
@@ -34,3 +35,23 @@ def apply_tf(t, x, y, z):
     r12 = 2 * (q.y * q.z - q.x * q.w)
     return (round(r00 * x + r01 * y + r02 * z + t.translation.x, 2),
             round(r10 * x + r11 * y + r12 * z + t.translation.y, 2))
+
+
+def iso8601(t):
+    """Unix seconds -> UTC text with milliseconds, like 2026-11-27T15:50:01.250Z."""
+    d = datetime.datetime.fromtimestamp(t, tz=datetime.timezone.utc)
+    return d.strftime("%Y-%m-%dT%H:%M:%S.") + "%03dZ" % (d.microsecond // 1000)
+
+
+def envelope(identity, payload, now, message_id):
+    """The outer layer of every message. The Pulse cloud_gateway forwards the string unchanged, so we add it here."""
+    return {
+        "schema_version": identity.get("schema_version", "1.0.0"),
+        "message_id": message_id,
+        "timestamp": iso8601(now),
+        "source": identity.get("source", "odin_cloud_publisher"),
+        "robot_id": identity["robot_id"],
+        "env": identity["env"],
+        "fleet": identity["fleet"],
+        "payload": payload,
+    }

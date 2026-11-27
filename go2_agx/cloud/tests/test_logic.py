@@ -6,7 +6,7 @@ import sys
 from types import SimpleNamespace as NS
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from cloud_logic import apply_tf, parse_class_names, yaw_of, yolo_signature  # noqa: E402
+from cloud_logic import apply_tf, envelope, iso8601, parse_class_names, yaw_of, yolo_signature  # noqa: E402
 
 
 def quat_z(yaw):
@@ -43,6 +43,11 @@ def main():
     c = [{"class": "chair", "distance_m": 3.4}]
     checks.append(("signature: same list, small move", yolo_signature(a) == yolo_signature(b)))
     checks.append(("signature: different list", yolo_signature(a) != yolo_signature(c)))
+    checks.append(("iso8601", iso8601(1795789200.25) == "2026-11-27T14:20:00.250Z"))
+    ident = {"robot_id": "r1", "env": "dev", "fleet": "f1"}
+    e = envelope(ident, {"kind": "odin.x.v1"}, 1795789200.25, "id-1")
+    checks.append(("envelope keys", sorted(e) == sorted(["schema_version", "message_id", "timestamp", "source", "robot_id", "env", "fleet", "payload"])))
+    checks.append(("envelope values", e["robot_id"] == "r1" and e["source"] == "odin_cloud_publisher" and e["payload"]["kind"] == "odin.x.v1"))
     failed = 0
     for name, ok in checks:
         print("%s  %s" % ("PASS" if ok else "FAIL", name))

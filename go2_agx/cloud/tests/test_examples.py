@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Every example validates against its schema, and stays under the size budget."""
+"""Every example is a full message: it must match the envelope schema and the schema of its payload kind,
+every kind has an example, and every example stays under the size budget."""
 import json
 import pathlib
 import sys
@@ -10,26 +11,32 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 MAX_BYTES = 4096
 
 
+def errors(schema, doc):
+    Draft202012Validator.check_schema(schema)
+    return [e.message for e in Draft202012Validator(schema).iter_errors(doc)]
+
+
 def main():
     failed = 0
-    schemas = sorted((ROOT / "schemas").glob("*.schema.json"))
-    for schema_path in schemas:
-        kind = schema_path.name.replace(".schema.json", "")
+    envelope_schema = json.loads((ROOT / "schemas" / "envelope.schema.json").read_text())
+    kinds = sorted(p.name.replace(".schema.json", "") for p in (ROOT / "schemas").glob("odin.*.schema.json"))
+    for kind in kinds:
         example = ROOT / "examples" / (kind + ".json")
         if not example.exists():
             print("FAIL  %s: no example" % kind)
             failed += 1
             continue
-        schema = json.loads(schema_path.read_text())
-        Draft202012Validator.check_schema(schema)
         raw = example.read_text()
-        doc = json.loads(raw)
-        errors = list(Draft202012Validator(schema).iter_errors(doc))
+        msg = json.loads(raw)
+        errs = errors(envelope_schema, msg)
+        if not errs:
+            if msg["payload"]["kind"] != kind:
+                errs = ["payload.kind is %s" % msg["payload"]["kind"]]
+            else:
+                errs = errors(json.loads((ROOT / "schemas" / (kind + ".schema.json")).read_text()), msg["payload"])
         size = len(raw.encode())
-        if errors:
-            print("FAIL  %s" % kind)
-            for e in errors:
-                print("      %s" % e.message)
+        if errs:
+            print("FAIL  %s: %s" % (kind, errs))
             failed += 1
         elif size > MAX_BYTES:
             print("FAIL  %s: %d bytes > %d" % (kind, size, MAX_BYTES))
@@ -37,10 +44,10 @@ def main():
         else:
             print("PASS  %s (%d bytes)" % (kind, size))
     for example in sorted((ROOT / "examples").glob("*.json")):
-        if not (ROOT / "schemas" / (example.stem + ".schema.json")).exists():
+        if example.stem not in kinds:
             print("FAIL  %s: example without schema" % example.name)
             failed += 1
-    print("== %d schemas, %d failed" % (len(schemas), failed))
+    print("== %d kinds, %d failed" % (len(kinds), failed))
     return 1 if failed else 0
 
 

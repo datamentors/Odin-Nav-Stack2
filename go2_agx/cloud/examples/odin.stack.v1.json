@@ -1,1 +1,0 @@
-{"kind": "odin.stack.v1", "seq": 88, "t_robot": 1795789210.0, "inputs": {"odometry": 0.1, "tf_map": 0.04, "yolo": 0.4, "nav_status": 1.2, "florence": null}, "yolo_hz": 9.6, "images": {"ons2": "ons2:go2", "gpu": "odin-gpu:go2"}, "commit": "d110974"}

@@ -133,47 +133,77 @@ def main():
         {"n": 1, "name": "chair 1", "label": "chair", "x": 0, "y": 0, "z": 2.0, "dist": 2.31, "direction": "ahead"}]})))
     n.on_florence(NS(data=json.dumps({"phrase": "table", "seq": None, "objects": [{"n": 1}]})))
     n.on_florence(NS(data="not json"))
-    n.stack()
+
+    # merged status: one message with map, nav and stack
+    n.send_status()
+    # status_due: dirty and 1 s later -> yes; just sent and not dirty -> no; NAVIGATING -> every 2 s
+    n.status_dirty = True
+    n.last["status"] = time.time() - 0.5
+    due_too_soon = n.status_due()
+    n.last["status"] = time.time() - 1.5
+    due_dirty = n.status_due()
+    n.status_dirty = False
+    n.last["status"] = time.time() - 1.5
+    due_idle = n.status_due()
+    n.on_nav(mission_status(state="NAVIGATING", mission_id="m2", current_waypoint_idx=0, total_waypoints=1,
+                            current_target=NS(position=NS(x=1.0, y=2.0)), distance_to_target_m=3.0))
+    n.status_dirty = False
+    n.last["status"] = time.time() - 2.5
+    due_navigating = n.status_due()
 
     # the spin loop's "list went empty" step, run once
     n.yolo_sig = ((("chair", 1.0)),)
     n.last_seen["yolo"] = time.time() - 5
     cloud_publisher.rospy.is_shutdown = iter([False, True]).__next__
     n.due = lambda k, p: False
+    n.status_due = lambda: False
     n.spin()
 
-    schemas = {p.name.replace(".schema.json", ""): json.loads(p.read_text()) for p in (ROOT / "schemas").glob("*.json")}
+    schemas = {p.name.replace(".schema.json", ""): json.loads(p.read_text()) for p in (ROOT / "schemas").glob("odin.*.json")}
+    envelope_schema = json.loads((ROOT / "schemas" / "envelope.schema.json").read_text())
     failed = 0
     counts = {}
+    want = {"odin.pose.v1": "/cloud_gateway/telemetry", "odin.detections.yolo.v1": "/cloud_gateway/telemetry",
+            "odin.status.v1": "/cloud_gateway/status", "odin.detections.florence.v1": "/cloud_gateway/events"}
+    ids = set()
     for topic, msg in published:
-        kind = msg["kind"]
+        payload = msg.get("payload", {})
+        kind = payload.get("kind")
         counts[kind] = counts.get(kind, 0) + 1
-        errs = list(Draft202012Validator(schemas[kind]).iter_errors(msg))
-        want = {"odin.pose.v1": "/cloud/telemetry", "odin.detections.yolo.v1": "/cloud/telemetry",
-                "odin.map.v1": "/cloud/status", "odin.nav.v1": "/cloud/status", "odin.stack.v1": "/cloud/status",
-                "odin.detections.florence.v1": "/cloud/events"}[kind]
-        if errs or topic != want or len(json.dumps(msg)) > 4096:
+        errs = [e.message for e in Draft202012Validator(envelope_schema).iter_errors(msg)]
+        if not errs:
+            errs = [e.message for e in Draft202012Validator(schemas[kind]).iter_errors(payload)]
+        ids.add(msg.get("message_id"))
+        bad = errs or topic != want[kind] or len(json.dumps(msg)) > 4096 \
+            or (msg["robot_id"], msg["env"], msg["fleet"]) != ("unitree-go2-000", "dev", "madeira-lab")
+        if bad:
             failed += 1
-            print("FAIL  %s on %s: %s" % (kind, topic, [e.message for e in errs] or "wrong topic or too big"))
+            print("FAIL  %s on %s: %s" % (kind, topic, errs or "wrong topic, identity or too big"))
     print("messages:", counts)
 
     def count(kind):
         return counts.get(kind, 0)
 
+    status = [m["payload"] for t, m in published if m["payload"]["kind"] == "odin.status.v1"][0]
+    yolo = [m["payload"] for t, m in published if m["payload"]["kind"] == "odin.detections.yolo.v1"]
     checks = [
-        ("pose sent twice, first without TF", count("odin.pose.v1") == 2 and "x" not in published[0][1]),
-        ("pose with TF is relocalized", published[1][1].get("relocalized") is True),
-        ("map sent once for two identical maps", count("odin.map.v1") == 1),
-        ("nav sent for each state change", count("odin.nav.v1") == 2),
+        ("pose sent twice, first without TF", count("odin.pose.v1") == 2 and "x" not in published[0][1]["payload"]),
+        ("pose with TF is relocalized", published[1][1]["payload"].get("relocalized") is True),
+        ("map/nav callbacks send nothing by themselves", count("odin.status.v1") == 1),
+        ("status holds map, nav and stack", status["map"]["name"] == "restaurant_walls" and status["nav"]["state"] == "IDLE"
+         and "odometry" in status["stack"]["inputs"]),
+        ("status: changed but sent <1 s ago -> wait", due_too_soon is False),
+        ("status: changed and 1 s passed -> send", due_dirty is True),
+        ("status: unchanged and 1.5 s passed -> wait", due_idle is False),
+        ("status: NAVIGATING resends after 2 s", due_navigating is True),
         ("yolo: 1st, refresh, changed list, then empty", count("odin.detections.yolo.v1") == 4),
-        ("yolo objects carry class names", any(o["class"] == "chair" for t, m in published
-                                               if m["kind"] == "odin.detections.yolo.v1" for o in m["objects"])),
-        ("yolo map position from TF", any(o.get("map_x") == 3.5 for t, m in published
-                                          if m["kind"] == "odin.detections.yolo.v1" for o in m["objects"])),
+        ("yolo objects carry class names", any(o["class"] == "chair" for p in yolo for o in p["objects"])),
+        ("yolo map position from TF", any(o.get("map_x") == 3.5 for p in yolo for o in p["objects"])),
+        ("last yolo message is the empty list", yolo[-1]["objects"] == []),
         ("florence: two valid searches, bad json ignored", count("odin.detections.florence.v1") == 2),
-        ("stack sent", count("odin.stack.v1") == 1),
-        ("map name from the ROS parameter", all(m.get("map") == "restaurant_walls" for t, m in published if m["kind"] in ("odin.pose.v1", "odin.map.v1"))),
-        ("last yolo message is the empty list", [m for t, m in published if m["kind"] == "odin.detections.yolo.v1"][-1]["objects"] == []),
+        ("map name from the ROS parameter", all(m["payload"].get("map") == "restaurant_walls" for t, m in published
+                                                 if m["payload"]["kind"] == "odin.pose.v1")),
+        ("every message has its own id", len(ids) == len(published)),
     ]
     for name, ok in checks:
         print("%s  %s" % ("PASS" if ok else "FAIL", name))

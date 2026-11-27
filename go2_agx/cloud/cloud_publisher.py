@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # ROS 1 node (python3, rospy). Reads our own topics and publishes JSON strings for the cloud side.
-# No AWS code and no credentials here. The Pulse cloud_gateway takes these Strings and sends them to MQTT.
-#   /cloud/telemetry  odin.pose.v1, odin.detections.yolo.v1
-#   /cloud/status     odin.map.v1, odin.nav.v1, odin.stack.v1
-#   /cloud/events     odin.detections.florence.v1
-# Settings: config/cloud_publisher.yaml (rates per kind). Use:  rosrun ... cloud_publisher.py _config:=<yaml>
+# No AWS code and no credentials here. The Pulse cloud_gateway forwards these Strings to MQTT UNCHANGED,
+# so every message is wrapped in the envelope here (schemas/envelope.schema.json).
+#   /cloud_gateway/telemetry  odin.pose.v1, odin.detections.yolo.v1     (MQTT QoS 0)
+#   /cloud_gateway/status     odin.status.v1                            (QoS 1, retained: ONE slot, so one message holds
+#                                                                        map + mission + health)
+#   /cloud_gateway/events     odin.detections.florence.v1               (QoS 1)
+# Settings: config/cloud_publisher.yaml (rates per kind). Use:  python3 cloud_publisher.py _config:=<yaml>
 import array
 import hashlib
 import json
@@ -12,11 +14,12 @@ import math
 import os
 import threading
 import time
+import uuid
 
 import rospy
 import tf2_ros
 import yaml
-from cloud_logic import apply_tf, parse_class_names, yaw_of, yolo_signature
+from cloud_logic import apply_tf, envelope, parse_class_names, yaw_of, yolo_signature
 from nav_msgs.msg import OccupancyGrid, Odometry
 from std_msgs.msg import String
 from vision_msgs.msg import Detection3DArray
@@ -39,12 +42,13 @@ class CloudPublisher:
         self.speed = 0.0
         self.tf_stamp = None
         self.tf_changed = 0.0
-        self.last = {"pose": 0.0, "yolo": 0.0, "map": 0.0, "nav": 0.0, "stack": 0.0}
+        self.last = {"pose": 0.0, "yolo": 0.0, "status": 0.0}
         self.map_sha = None
         self.nav_sig = None
         self.yolo_sig = None
-        self.map_msg = None
-        self.nav_msg = None
+        self.map_part = None      # parts of odin.status.v1; None until the topic has been seen
+        self.nav_part = None
+        self.status_dirty = False
         self.map_name = cfg.get("map_name") or os.environ.get("ONS2_MAP") or "unknown"
 
         self.tfbuf = tf2_ros.Buffer()
@@ -62,18 +66,20 @@ class CloudPublisher:
         if MissionStatus is not None:
             rospy.Subscriber(t["nav_status"], MissionStatus, self.on_nav, queue_size=1)
         else:
-            rospy.logwarn("nav_interfaces not found: odin.nav.v1 disabled")
+            rospy.logwarn("nav_interfaces not found: nav part of odin.status.v1 stays null")
         rospy.Subscriber(t["yolo_names"], String, self.on_names, queue_size=1)
         rospy.Subscriber(t["yolo_3d"], Detection3DArray, self.on_yolo, queue_size=1)
         rospy.Subscriber(t["florence"], String, self.on_florence, queue_size=5)
 
     # ---- helpers
     def send(self, channel, kind, body):
+        now = time.time()
         with self.lock:
             n = self.seq.get(kind, 0)
             self.seq[kind] = n + 1
-        msg = {"kind": kind, "seq": n, "t_robot": round(time.time(), 3)}
-        msg.update(body)
+        payload = {"kind": kind, "seq": n, "t_robot": round(now, 3)}
+        payload.update(body)
+        msg = envelope(self.cfg["identity"], payload, now, str(uuid.uuid4()))
         self.pub[channel].publish(String(data=json.dumps(msg, separators=(",", ":"))))
 
     def resolve_map_name(self):
@@ -112,8 +118,8 @@ class CloudPublisher:
         self.resolve_map_name()
         sha = hashlib.sha256(array.array('b', m.data).tobytes()).hexdigest()
         o = m.info.origin
-        self.map_msg = {
-            "map": self.map_name,
+        self.map_part = {
+            "name": self.map_name,
             "resolution_m": round(m.info.resolution, 4),
             "origin": {"x": round(o.position.x, 3), "y": round(o.position.y, 3), "yaw": round(yaw_of(o.orientation), 3)},
             "width": int(m.info.width),
@@ -124,13 +130,12 @@ class CloudPublisher:
         }
         if sha != self.map_sha:
             self.map_sha = sha
-            self.last["map"] = time.time()
-            self.send("status", "odin.map.v1", self.map_msg)
+            self.status_dirty = True
 
     def on_nav(self, m):
         self.seen("nav_status")
         t = m.current_target.position
-        self.nav_msg = {
+        self.nav_part = {
             "state": m.state,
             "mission_id": m.mission_id,
             "waypoint_idx": int(m.current_waypoint_idx),
@@ -144,8 +149,7 @@ class CloudPublisher:
         sig = (m.state, m.mission_id, m.current_waypoint_idx)
         if sig != self.nav_sig:
             self.nav_sig = sig
-            self.last["nav"] = time.time()
-            self.send("status", "odin.nav.v1", self.nav_msg)
+            self.status_dirty = True
 
     def on_names(self, m):
         try:
@@ -176,8 +180,9 @@ class CloudPublisher:
                 "map_y": my,
             })
         sig = yolo_signature(objects)
-        period = 1.0 / self.cfg["rates_hz"]["yolo_max"] if self.cfg["rates_hz"]["yolo_max"] > 0 else 0
-        refresh = self.cfg["rates_hz"].get("yolo_refresh_s", 10.0)
+        rates = self.cfg["rates_hz"]
+        period = 1.0 / rates["yolo_max"] if rates["yolo_max"] > 0 else 0
+        refresh = rates.get("yolo_refresh_s", 10.0)
         changed = sig != self.yolo_sig and period and now - self.last["yolo"] >= period
         if changed or (refresh > 0 and now - self.last["yolo"] >= refresh):
             self.yolo_sig = sig
@@ -224,17 +229,34 @@ class CloudPublisher:
             pass
         self.send("telemetry", "odin.pose.v1", body)
 
-    def stack(self):
+    def stack_part(self):
         now = time.time()
         inputs = {k: (round(now - self.last_seen[k], 2) if k in self.last_seen else None)
                   for k in ("odometry", "tf_map", "yolo", "nav_status", "florence")}
         images = dict(kv.split("=", 1) for kv in os.environ.get("STACK_IMAGES", "").split(",") if "=" in kv)
-        body = {"inputs": inputs, "yolo_hz": round(len(self.yolo_stamps) / 5.0, 1)}
+        part = {"inputs": inputs, "yolo_hz": round(len(self.yolo_stamps) / 5.0, 1)}
         if images:
-            body["images"] = images
+            part["images"] = images
         if os.environ.get("STACK_COMMIT"):
-            body["commit"] = os.environ["STACK_COMMIT"]
-        self.send("status", "odin.stack.v1", body)
+            part["commit"] = os.environ["STACK_COMMIT"]
+        return part
+
+    def status_due(self):
+        """Send the whole status when something changed (at most once per min_status_interval_s),
+        every nav_active_refresh_s while NAVIGATING, otherwise every status_refresh_s."""
+        r = self.cfg["rates_hz"]
+        since = time.time() - self.last["status"]
+        navigating = self.nav_part is not None and self.nav_part["state"] == "NAVIGATING"
+        period = r["nav_active_refresh_s"] if navigating else r["status_refresh_s"]
+        return since >= period or (self.status_dirty and since >= r["min_status_interval_s"])
+
+    def send_status(self):
+        self.resolve_map_name()
+        if self.map_part:
+            self.map_part["name"] = self.map_name
+        self.status_dirty = False
+        self.last["status"] = time.time()
+        self.send("status", "odin.status.v1", {"map": self.map_part, "nav": self.nav_part, "stack": self.stack_part()})
 
     def spin(self):
         r = self.cfg["rates_hz"]
@@ -242,13 +264,8 @@ class CloudPublisher:
         while not rospy.is_shutdown():
             if r["pose"] > 0 and self.due("pose", 1.0 / r["pose"]):
                 self.pose()
-            if self.map_msg and self.due("map", r["map_refresh_s"]):
-                self.send("status", "odin.map.v1", self.map_msg)
-            nav_period = r["nav_active_refresh_s"] if self.nav_msg and self.nav_msg["state"] == "NAVIGATING" else r["nav_refresh_s"]
-            if self.nav_msg and self.due("nav", nav_period):
-                self.send("status", "odin.nav.v1", self.nav_msg)
-            if self.due("stack", r["stack_refresh_s"]):
-                self.stack()
+            if self.status_due():
+                self.send_status()
             # yolo_detector publishes nothing when it sees nothing: say so once, or viewers keep stale objects
             if self.yolo_sig not in (None, ()) and time.time() - self.last_seen.get("yolo", 0) > 1.5:
                 self.yolo_sig = ()

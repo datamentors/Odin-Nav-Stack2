@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Odin cloud message envelope",
+  "description": "Outer layer of every message the cloud_publisher sends to the Pulse cloud_gateway. The gateway forwards the string unchanged, so this layer is added by the node. The payload is described by the schema of its kind.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "message_id", "timestamp", "source", "robot_id", "env", "fleet", "payload"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "message_id": {"type": "string", "minLength": 8},
+    "timestamp": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$", "description": "UTC, robot clock"},
+    "source": {"type": "string", "minLength": 1},
+    "robot_id": {"type": "string", "minLength": 1},
+    "env": {"type": "string", "minLength": 1},
+    "fleet": {"type": "string", "minLength": 1},
+    "payload": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {"kind": {"type": "string", "pattern": "^odin\\.[a-z0-9.]+\\.v[0-9]+$"}}
+    }
+  }
+}

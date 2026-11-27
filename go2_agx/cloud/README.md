@@ -1,27 +1,28 @@
 # cloud: JSON for the cloud side (Phase 1, in progress)
 
-`cloud_publisher.py` is a ROS 1 node. It reads our own topics and publishes JSON strings. It has no AWS code and no credentials. The Pulse `cloud_gateway` (in ardia-robotics) takes these strings and sends them to MQTT. See `Odin-AWS-Streaming-Proposal.md`.
+`cloud_publisher.py` is a ROS 1 node. It reads our own topics and publishes JSON strings. It has no AWS code and no credentials. The Pulse `cloud_gateway` (in ardia-robotics, node name `cloud_gateway`) reads Strings on `~/telemetry`, `~/status` and `~/events` and sends them to MQTT **unchanged**, so the node adds the envelope itself. See `Odin-AWS-Streaming-Proposal.md`.
 
-| Kind | Output topic | Source | Rate |
+| Kind | Output topic (MQTT) | Source | Rate |
 |---|---|---|---|
-| `odin.pose.v1` | `/cloud/telemetry` | TF `map` -> `odin1_base_link`, `/odin1/odometry` | `rates_hz.pose` (2) |
-| `odin.detections.yolo.v1` | `/cloud/telemetry` | `/yolo_detections_3d`, `/yolo_class_names` | up to `rates_hz.yolo_max` (2), only when the list changes |
-| `odin.map.v1` | `/cloud/status` | `/map` | on change + every 60 s |
-| `odin.nav.v1` | `/cloud/status` | `/waypoint_manager/status` | on change + every 10 s |
-| `odin.stack.v1` | `/cloud/status` | topic ages, env `STACK_IMAGES`, `STACK_COMMIT` | every 10 s |
-| `odin.detections.florence.v1` | `/cloud/events` | `/florence/objects_3d` | one per search |
+| `odin.pose.v1` | `/cloud_gateway/telemetry` (QoS 0) | TF `map` -> `odin1_base_link`, `/odin1/odometry` | `rates_hz.pose` (2) |
+| `odin.detections.yolo.v1` | `/cloud_gateway/telemetry` | `/yolo_detections_3d`, `/yolo_class_names` | up to `yolo_max` (2), when the list changes, and every `yolo_refresh_s` (10) |
+| `odin.status.v1` | `/cloud_gateway/status` (QoS 1, **retained**) | `/map`, `/waypoint_manager/status`, topic ages, env | on change (at most 1/s), every 2 s while NAVIGATING, else every 10 s |
+| `odin.detections.florence.v1` | `/cloud_gateway/events` (QoS 1) | `/florence/objects_3d` | one per search |
 
-Every message has `kind`, `seq` (per kind) and `t_robot` (robot clock, unix seconds).
+**One retained slot.** MQTT keeps one retained message per topic, so everything a late viewer needs (map in use, mission state, health) is in the single `odin.status.v1` message, with parts `map`, `nav` and `stack`. `map` and `nav` are `null` until their topic has been seen.
 
-- `schemas/`: one JSON Schema per kind. `examples/`: one example per kind (under 4 KB).
-- `config/cloud_publisher.yaml`: rates and topic names. A rate of 0 turns a kind off.
-- YOLO: `yolo_detector` publishes nothing when it sees nothing, so the node sends one empty list after 1.5 s without detections. Map x/y use TF `camera_frame` -> `map`, the same way `yolo_detector.py` does.
+**Envelope** (`schemas/envelope.schema.json`), around every message:
+`schema_version`, `message_id`, `timestamp` (UTC, robot clock), `source`, `robot_id`, `env`, `fleet`, `payload`. The payload always has `kind`, `seq` (per kind) and `t_robot` (unix seconds). The identity comes from `identity:` in the config and must match the Pulse profile.
+
+- `schemas/`: the envelope schema and one payload schema per kind. `examples/`: one full message per kind (under 4 KB).
+- `config/cloud_publisher.yaml`: identity, rates and topic names. A rate of 0 turns a kind off.
+- YOLO: `yolo_detector` publishes nothing when it sees nothing, so the node sends one empty list after 1.5 s without detections. Map x/y use TF `camera_frame` -> `map`, the same way `yolo_detector.py` does. `bearing_deg`: positive = to the right of the camera axis. `distance_m` = horizontal distance in the camera frame.
 - Florence: `/florence/objects_3d` is only published while `send on` is active in the Florence relay, so searches done with `send off` do not reach the cloud.
-- YOLO `bearing_deg`: positive = to the right of the camera axis. `distance_m` = horizontal distance in the camera frame.
+- Map name: read from the ROS parameter `/map_planner/map_file_name`.
 
-Tests (no ROS needed): `python3 tests/test_logic.py` (helpers in `cloud_logic.py`); `python3 tests/test_examples.py` and `python3 tests/test_node.py` (need `jsonschema` and `pyyaml`). `test_node.py` runs the node with fake ROS modules and checks every message it publishes against its schema, topic and size.
+Tests (no ROS needed): `python3 tests/test_logic.py` (helpers in `cloud_logic.py`); `python3 tests/test_examples.py` and `python3 tests/test_node.py` (need `jsonschema` and `pyyaml`). `test_node.py` runs the node with fake ROS modules and checks every message it publishes against the envelope, its payload schema, its topic and the size.
 
 Run the node (inside the ons2-go2 container, ROS sourced, nav_interfaces built):
 `python3 cloud_publisher.py _config:=config/cloud_publisher.yaml`
 
-Not tested yet: the node on the robot. To confirm: the exact String input topics of the Pulse `cloud_gateway`, the frame names, and the `/map` topic.
+Seen on the robot (27 Nov 2026, before the envelope and merged status): pose, YOLO, map, nav `IDLE`, stack and Florence. Not tested: the new envelope on the robot, the bridge to ROS 2, the gateway, `NAVIGATING`.
