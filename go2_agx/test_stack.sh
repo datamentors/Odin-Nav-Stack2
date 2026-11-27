@@ -58,7 +58,8 @@ summary() { echo; echo "== $PASS passed, $FAIL failed"; [ $FAIL -eq 0 ]; }
 yolo_mode() {
   case "${YOLO_MODE:-auto}" in
     gpu|cpu) echo "$YOLO_MODE" ;;
-    *) if a 'test -x ~/odin-perception/.venv/bin/python && test -d ~/odin_test/yolo_gpu'; then echo gpu; else echo cpu; fi ;;
+    # gpu when the GPU services can run: the odin-gpu image (Odin-perception inside) or the host venv, plus the service code
+    *) if a '(docker image inspect odin-gpu:go2 >/dev/null 2>&1 || test -x ~/odin-perception/.venv/bin/python) && test -d ~/odin_test/yolo_gpu'; then echo gpu; else echo cpu; fi ;;
   esac
 }
 

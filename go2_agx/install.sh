@@ -69,7 +69,9 @@ rsync -a --backup --suffix=".bak_$ts" --include start_odin_remote.sh --include s
 chmod +x ~/odin_test/*.sh ~/odin_test/yolo_trt/*.sh ~/ons2_docker/*.sh ~/odin_nav_stack/drv0144/*.sh 2>/dev/null
 
 echo "== YOLO weights"
-~/odin_test/yolo_trt/get_weights.sh || echo "  weights failed (retry: ~/odin_test/yolo_trt/get_weights.sh)"
+~/odin_test/yolo_trt/get_weights.sh || echo "  yolov5l weights failed (retry: ~/odin_test/yolo_trt/get_weights.sh)"
+# the small CPU weights ONS2 needs for --with-yolo (also used as the fallback when the GPU is not available)
+~/odin_test/yolo_trt/get_weights.sh --cpu || echo "  yolov5s weights failed (retry: ~/odin_test/yolo_trt/get_weights.sh --cpu)"
 
 if [ $DO_ONS2 = 1 ]; then
   echo "== ONS2 workspace (~/ons2)"
