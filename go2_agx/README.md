@@ -216,6 +216,27 @@ but **not tested yet**. The manual steps below are what it does.
 - AGX Ethernet profile to the Go2, for example:
   `nmcli con add type ethernet ifname eno1 con-name go2-net ipv4.method manual ipv4.addresses <AGX_IP>/24 ipv4.never-default yes`
 
+**Publishing the images to AWS ECR, and using them on another Go2** (`push_images.sh`, `pull_images.sh`)
+
+The three images that run the stack (`ons2:go2`, `odin-yolo:0144`, `odin-gpu:go2`) are `arm64` and go to one private repository each, `<PREFIX>/odin_ons2`, `odin_yolo` and `odin_gpu` (default prefix `robotics`), with a version tag. They are large (24, 6 and 19 GB on disk, the upload is tens of GB), so run the push on the Go2 itself.
+
+1. Create the three repositories once (private, **tag immutability on**, scan on push on), in the console or with `--create-repos`.
+2. Log in to AWS yourself (`aws sso login`, or export keys in the shell; nothing is read from or written to a file by the scripts).
+3. On the machine with the images:
+   ```
+   export REGISTRY=<account>.dkr.ecr.<region>.amazonaws.com VERSION=1.0.0
+   ./go2_agx/push_images.sh                    # dry run: checks the images, prints what it would push, pushes nothing
+   ./go2_agx/push_images.sh --push             # logs in to ECR and pushes (add --create-repos if the repositories do not exist)
+   ```
+   It refuses `VERSION=latest` and a version that already exists in ECR, and prints the digest of each pushed image.
+4. On a new Go2 (instead of `build_images.sh`):
+   ```
+   ./go2_agx/pull_images.sh                    # pulls the three and retags them to the local names; --force replaces existing ones
+   ./go2_agx/install.sh --check && ./go2_agx/install.sh --ons2 --engine
+   ```
+
+Not in the images, so still needed on a new Go2: the ONS2 workspace in `~/ons2` (`install.sh --ons2`), the scripts, YOLO weights and engine, the maps and the configs. `ros1_bridge:go2` (cloud link) has no Dockerfile in this repo and is not covered by these scripts. YOLOv5 code (AGPL) is inside the images: fine for a private registry, check before sharing outside the company. The scripts were checked only as a dry run against a stand-in `docker`; the first real push has not been done.
+
 ---
 
 ## 7. Start-up order
