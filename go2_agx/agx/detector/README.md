@@ -139,7 +139,8 @@ The order matters. Commands are for the AGX layout; in single-machine mode run t
 3. On the AGX, start the detector (GPU service + ROS node): `~/odin_test/start_yolo_gpu_agx.sh`
 4. Optionally, on the AGX, start Florence-2: `~/odin_test/start_perception_agx.sh`
 5. On the Go2, start ONS2 with the detector on the AGX: `~/ons2_docker/ons2_start.sh --map=<map> --with-yolo-agx`
-   (add `--with-cloud` to also send the detections to the cloud: `cloud_publisher` reads `/yolo_detections_3d`,
+   (add `--with-semantic-map` to keep the objects in the map frame: `go2_agx/semantic_map/README.md`;
+   add `--with-cloud` to also send the detections to the cloud: `cloud_publisher` reads `/yolo_detections_3d`,
    `/yolo_class_names` and `/florence/objects_3d`, see `go2_agx/cloud/README.md`)
 
 | Process | Container | What |

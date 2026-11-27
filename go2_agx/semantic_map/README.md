@@ -40,6 +40,11 @@ rostopic pub -1 /semantic_map/command std_msgs/String "data: clear"
 
 In Foxglove: an Image panel on `/semantic_map/bev/compressed`, and `/semantic_map/markers` in the 3D panel.
 
+Inputs it needs: the GPU detector's `/perception/objects` with 3D points (so `start_yolo_gpu_agx.sh` on the AGX and the
+lidar depth image `start_depth_agx.sh`), and TF `map` → camera (the Odin1 driver relocalized on the map, plus
+`tf_relay` from `--with-yolo-agx`). Any `DETECTOR` / `TRACKER` works; track IDs (`iou`, `botsort`, `sam2`) make the
+merging more stable. Offline test, no ROS: `python3 go2_agx/semantic_map/test_object_store.py /tmp/out`.
+
 ## How objects are made and updated
 
 For every object in a `/perception/objects` frame with a 3D point (`xyz`), a score ≥ `~min_score` and a distance ≤

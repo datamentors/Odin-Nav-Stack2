@@ -280,7 +280,8 @@ Not in the images, so still needed on a new Go2: the ONS2 workspace in `~/ons2` 
    Florence-2 in about 1–2 minutes (by hand: `start_odin_agx.sh go2`, `start_depth_agx.sh`,
    `start_yolo_gpu_agx.sh`, `start_perception_agx.sh`).
 3. **Go2:** start ONS2: `~/ons2_docker/ons2_start.sh --map=<map_name> --with-yolo-agx`, adding `--with-bridge` only
-   when the robot should walk. Add `--with-cloud` to also run `cloud_publisher` (JSON for the cloud link, see `cloud/README.md`;
+   when the robot should walk. Add `--with-semantic-map` to keep the detected objects in the map frame
+   (`semantic_map/README.md`; Foxglove: `/semantic_map/bev/compressed`, `/semantic_map/markers`). Add `--with-cloud` to also run `cloud_publisher` (JSON for the cloud link, see `cloud/README.md`;
    it also starts the ROS 1 → ROS 2 bridge `odin-bridge` if needed). The cloud side itself is the Pulse profile in ardia-robotics.
 4. **Laptop:** open Foxglove, connect to `ws://<GO2_WIFI_IP>:8765` and import the layout from `foxglove/`.
 
