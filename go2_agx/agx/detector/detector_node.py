@@ -324,14 +324,27 @@ class DetectorNode:
             sel = label > 0
             vis[sel] = ((vis[sel].astype(np.uint16) + lut[label[sel]]) >> 1).astype(np.uint8)
         fs, th = max(0.5, img.shape[1] / 1600.0), max(1, int(round(img.shape[1] / 800.0)))   # text/lines scale with size
-        for o, c in sorted(zip(objs, colors), key=lambda oc: oc[0]["target"]):   # the target last, on top
+        tgt = None
+        for o, c in zip(objs, colors):   # other objects: thin boxes, small labels
+            if o["target"]:
+                tgt = (o, c)
+                continue
             text = ("#%d " % o["track_id"] if o["track_id"] is not None else "") + "%s %.2f" % (o["name"], o["score"])
-            if o["xyz"]:
-                text += " %.1fm" % o["xyz"][2]
             x1, y1, x2, y2 = [int(round(v)) for v in o["box"]]
-            cv2.rectangle(vis, (x1, y1), (x2, y2), c, th * (2 if o["target"] else 1))
-            cv2.putText(vis, text, (x1, max(int(20 * fs), y1 - 6)), 0, 0.7 * fs, c, th, cv2.LINE_AA)
-        cv2.putText(vis, "%s | %s | %.0f ms" % (self.info["detector"], self.info["tracker"], ms), (10, int(30 * fs)),
+            cv2.rectangle(vis, (x1, y1), (x2, y2), c, th)
+            cv2.putText(vis, text, (x1, max(int(20 * fs), y1 - 6)), 0, 0.6 * fs, c, th, cv2.LINE_AA)
+        if tgt is not None:   # the target: thick red box and a large filled label on top
+            o, c = tgt
+            x1, y1, x2, y2 = [int(round(v)) for v in o["box"]]
+            cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 0, 0), th * 7)
+            cv2.rectangle(vis, (x1, y1), (x2, y2), TARGET_COLOR, th * 4)
+            text = "TARGET #%d %s %.2f" % (o["track_id"], o["name"], o["score"]) + (" %.1fm" % o["xyz"][2] if o["xyz"] else "")
+            (tw, tht), _ = cv2.getTextSize(text, 0, 1.3 * fs, 2 * th)
+            ty = y1 - 10 if y1 - tht - 16 > 0 else y2 + tht + 16
+            cv2.rectangle(vis, (x1, ty - tht - 8), (x1 + tw + 12, ty + 8), TARGET_COLOR, -1)
+            cv2.putText(vis, text, (x1 + 6, ty), 0, 1.3 * fs, (255, 255, 255), 2 * th, cv2.LINE_AA)
+        state = ("TARGET #%d" % tgt[0]["track_id"]) if tgt else "no target"
+        cv2.putText(vis, "%s | %s | %.0f ms | %s" % (self.info["detector"], self.info["tracker"], ms, state), (10, int(30 * fs)),
                     0, 0.7 * fs, (255, 255, 255), th, cv2.LINE_AA)
         for raw, jpg, width in outs:
             self._publish_image(raw, jpg, vis, header, "bgr8", ".jpg", "jpeg", width)

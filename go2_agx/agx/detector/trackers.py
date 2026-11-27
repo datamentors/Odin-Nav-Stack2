@@ -161,7 +161,7 @@ class SAM2Tracker(Tracker):
     CFG = {"tiny": ("configs/sam2.1/sam2.1_hiera_t.yaml", "sam2.1_hiera_tiny.pt"),
            "small": ("configs/sam2.1/sam2.1_hiera_s.yaml", "sam2.1_hiera_small.pt")}
 
-    def __init__(self, model=None, image_size=None, max_lost=10, min_score=0.5):
+    def __init__(self, model=None, image_size=None, max_lost=10, min_score=0.5, max_unanchored=30):
         import torch
         import sam2.build_sam as bs
         self.torch = torch
@@ -180,8 +180,10 @@ class SAM2Tracker(Tracker):
             self.cam = None
             self.img_pred, mode = SAM2ImagePredictor(bs.build_sam2(cfg, ckpt, device="cuda", hydra_overrides_extra=over)), \
                 "image predictor, box propagation"
+            # the image predictor hard-codes the backbone feature sizes of a 1024 input: scale them to image_size
+            self.img_pred._bb_feat_sizes = [(image_size // k, image_size // k) for k in (4, 8, 16)]
         self._desc = "SAM 2.1 %s @%d (%s)" % (model, image_size, mode)
-        self.max_lost, self.min_score = max_lost, min_score
+        self.max_lost, self.min_score, self.max_unanchored = max_lost, min_score, max_unanchored
         self.next_id = 0
         self.reset()
 
@@ -203,7 +205,7 @@ class SAM2Tracker(Tracker):
 
     def start(self, img, box, cls=-1):
         self.next_id += 1
-        self.obj = {"id": self.next_id, "box": [float(v) for v in box], "cls": int(cls), "lost": 0}
+        self.obj = {"id": self.next_id, "box": [float(v) for v in box], "cls": int(cls), "lost": 0, "free": 0}
         if self.cam is not None:
             with self._ctx():
                 self.cam.load_first_frame(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
@@ -216,26 +218,55 @@ class SAM2Tracker(Tracker):
         cols, rows = np.flatnonzero(mask.any(0)), np.flatnonzero(mask.any(1))
         return [float(cols[0]), float(rows[0]), float(cols[-1]), float(rows[-1])] if len(cols) else None
 
+    @staticmethod
+    def _largest_component(mask):
+        """Keep the biggest connected blob: stray pieces of background would stretch the box."""
+        n, lab, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+        if n <= 2:
+            return mask
+        return lab == 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+
     def update(self, img, boxes, scores, cls):
+        """Prompt SAM 2 with the previous box, or with the detector's box of the same object when there is one
+        (re-anchoring: stops the box from creeping onto the background). A mask that jumps away or changes size too
+        much is treated as lost; after max_lost lost frames the object is dropped (the service then clears the target)."""
         none = np.full(len(boxes), -1, np.int64)
         o = self.obj
         if o is None:
             return none, []
+        prev = np.asarray(o["box"], np.float32)
+        prompt, anchored = prev, False
+        if o["cls"] >= 0 and len(boxes):
+            same = np.flatnonzero(np.asarray(cls) == o["cls"])
+            if len(same):
+                ious = iou_matrix(prev[None], np.asarray(boxes)[same])[0]
+                k = int(np.argmax(ious))
+                if ious[k] >= 0.3:
+                    prompt, anchored = np.asarray(boxes)[same[k]], True
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         with self._ctx():
-            if self.cam is not None:
+            if self.cam is not None:   # (streaming predictor: keeps its own memory, prompt not used)
                 _, logits = self.cam.track(rgb)
                 mask = (logits[0, 0] > 0).cpu().numpy()
                 score = 1.0
             else:
-                x1, y1, x2, y2 = o["box"]
-                mx, my = 0.1 * (x2 - x1), 0.1 * (y2 - y1)   # a little room: the object moved since the last frame
                 self.img_pred.set_image(rgb)
-                masks, sc, _ = self.img_pred.predict(box=np.array([x1 - mx, y1 - my, x2 + mx, y2 + my], np.float32),
-                                                     multimask_output=False)
+                masks, sc, _ = self.img_pred.predict(box=prompt.astype(np.float32), multimask_output=False)
                 mask, score = masks[0] > 0, float(sc[0])
+        mask = self._largest_component(mask)
         nb = self._mask_box(mask)
-        if nb is None or score < self.min_score:
+        ok = nb is not None and score >= self.min_score
+        if ok and not anchored:   # plausibility against the last good box (an anchored box comes from the detector)
+            area = lambda b: max(1.0, (b[2] - b[0]) * (b[3] - b[1]))
+            ratio = area(nb) / area(prev)
+            ok = 0.4 <= ratio <= 2.5 and iou_matrix(prev[None], np.asarray([nb]))[0, 0] >= 0.3
+        # an object the detector knows (cls >= 0) must be confirmed by it now and then: SAM 2 alone slowly slides onto
+        # whatever is there once the object has left the view
+        o["free"] = 0 if anchored else o["free"] + 1
+        if o["cls"] >= 0 and o["free"] > self.max_unanchored:
+            self.obj = None
+            return none, []
+        if not ok:
             o["lost"] += 1
             if o["lost"] > self.max_lost:
                 self.obj = None

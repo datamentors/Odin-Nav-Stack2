@@ -38,6 +38,7 @@ API. Images are raw BGR uint8 bytes with the header X-Shape: "h,w"; boxes are [x
 """
 import base64
 import collections
+import concurrent.futures
 import json
 import os
 import sys
@@ -202,6 +203,15 @@ class Pipeline:
         return self._set(tid, "target = track %d (IoU %.2f, frame %.2f s from stamp)" % (tid, ious[k], dt))
 
 
+# All model work runs on ONE long-lived thread: Ultralytics (YOLOE) sets its predictor up again on every new thread
+# (~1 s), and the HTTP server answers each request on a new thread. CUDA state stays on one thread for the others too.
+MODEL_THREAD = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="model")
+
+
+def on_model_thread(fn, *a, **k):
+    return MODEL_THREAD.submit(fn, *a, **k).result()
+
+
 def serve(pipe, port):
     class H(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -248,12 +258,12 @@ def serve(pipe, port):
                 if u.path == "/detect":
                     img = self._image()
                     stamp = float(q["stamp"]) if q.get("stamp") else None
-                    return self._send(200, pipe.detect(img, float(q.get("conf", 0.25)), stamp, q.get("track", "1") != "0",
+                    return self._send(200, on_model_thread(pipe.detect, img, float(q.get("conf", 0.25)), stamp, q.get("track", "1") != "0",
                                                        q.get("masks", "0") == "1", float(q.get("scale", 1.0))))
                 if u.path == "/target":
-                    return self._send(200, pipe.select(json.loads(self._body() or b"{}")))
+                    return self._send(200, on_model_thread(pipe.select, json.loads(self._body() or b"{}")))
                 if u.path == "/classes":
-                    return self._send(200, pipe.set_classes(json.loads(self._body() or b"{}")))
+                    return self._send(200, on_model_thread(pipe.set_classes, json.loads(self._body() or b"{}")))
                 self._send(404, {})
             except Exception as e:   # never kill the service on one bad request
                 self._send(500, {"error": "%s: %s" % (type(e).__name__, e)})
@@ -264,6 +274,6 @@ def serve(pipe, port):
 
 if __name__ == "__main__":
     env = os.environ.get
-    serve(Pipeline(env("DETECTOR", "yolov5"), env("TRACKER", "none"), env("DETECTOR_WEIGHTS") or None,
+    serve(on_model_thread(Pipeline, env("DETECTOR", "yolov5"), env("TRACKER", "none"), env("DETECTOR_WEIGHTS") or None,
                    float(env("HISTORY_SEC", "5"))),
           int(env("DETECTOR_PORT", "8750")))
