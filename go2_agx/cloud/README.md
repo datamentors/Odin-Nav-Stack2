@@ -48,12 +48,16 @@ By hand inside ons2-go2 (development): `python3 cloud_publisher.py _config:=conf
 ## Status (27 Nov 2026)
 
 Verified on the Go2 with the Pulse runtime of ardia-robotics (`go2-demo`) connected to AWS IoT (dev, shared identity `unitree-go2-000`):
-`CLOUD=1 test_stack.sh verify` passes; in the AWS IoT MQTT test client `odin.pose.v1`, `odin.detections.yolo.v1`, `odin.status.v1` and
-`odin.detections.florence.v1` arrive and match the schemas, about 0.1 s after the robot stamps them; `odin.status.v1` is retained (AWS
-replays the same message on a new subscription after the runtime stopped); `nav.state` `NAVIGATING` with goal and distance arrives
-during a `go F1` without the chassis bridge (the legs do not move).
+- `CLOUD=1 test_stack.sh all`: preflight 12 of 12, then **42 passed, 0 failed** (including the `cloud` window and the messages).
+- In the AWS IoT MQTT test client `odin.pose.v1`, `odin.detections.yolo.v1`, `odin.status.v1` and `odin.detections.florence.v1` arrive and match the schemas, about 0.1 s after the robot stamps them.
+- `odin.status.v1` is retained (AWS replays the same message on a new subscription after the runtime stopped).
+- Mission state: `NAVIGATING` with goal and distance during a `go F1` without the chassis bridge (the legs do not move, the distance stays constant), `CANCELLED` after the cancel. With the chassis bridge, `go F1` from 1.85 m: the status followed the robot (1.85, 1.47, 0.4 m, `ALIGNING`) until `COMPLETED`.
+- Video: signaling, pipeline at 10 fps and the KVS viewer (seen by the operator in an earlier run); in the full run `active_sessions 1`, 959 of 959 frames sent, no drops (only the numbers were read).
 
-`nav.progress_percent` is the mission manager's own value: the share of waypoints reached counting the current one, so a single-goal
-mission reads 100 from the start. Use `distance_to_target_m` for the distance still to go.
+Known issues:
+- `nav.progress_percent` is the mission manager's own value: the share of waypoints reached counting the current one, so a single-goal mission reads 100 from the start. Use `distance_to_target_m` for the distance still to go.
+- After a cancel, `nav.state` is `CANCELLED` and `nav.goal` is `{x: 0, y: 0}` (it should be `null`): the node only nulls the goal for `IDLE`.
+- `stack.inputs.florence` counts the replayed (latched) message at start, so it reads the time since the node started until the first real search.
+- The Ardia `check.sh` once reported `cloud_gateway lifecycle: Node not found` right after a start; three retries showed `active`. It needs a retry (in ardia-robotics).
 
 Not tested: recovery after a connection loss, CPU / RAM with the camera stream and the whole stack, long runs.

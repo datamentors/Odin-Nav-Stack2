@@ -138,6 +138,9 @@ map, so they can be used by `go F#`.
 | `agx/yolo_trt/` | `export_onnx.py` (YOLOv5l → ONNX), `yolo_trt_service.py` (same HTTP API as `yolo_gpu_service.py`, TensorRT engine), `compare.py` (PyTorch vs TensorRT on the same images) |
 | `agx/system/` | `odin_watchdog.sh`, `odin_autostart.sh`, `odin_usb_tuning.sh`, their systemd units and the udev rule |
 | `agx/docker/` | `Dockerfile.driver` (image `odin-drv:0144`, build base), `Dockerfile.yolo` (image `odin-yolo:0144`, the image the container `odin-agx` runs), `Dockerfile.gpu` (image `odin-gpu:go2`, the optional container for the GPU model services) |
+| `cloud/` | Our side of the link to AWS: `cloud_publisher.py` (JSON of pose, map, mission, YOLO, Florence-2), schemas, examples, tests, `verify_topics.py`; started with `ons2_start.sh --with-cloud`. See `cloud/README.md` |
+| `build_images.sh`, `push_images.sh`, `pull_images.sh` | build the 5 images from the repo; publish the three that run the stack to AWS ECR (dry run by default) / pull them on another Go2 |
+| `install.sh`, `test_stack.sh`, `walk_monitor.py` | host set-up; start and check everything (`CLOUD=1` adds the cloud link); the walking test of one goal (moves the robot with the chassis bridge on) |
 | `foxglove/` | Layout with 3D view, camera / YOLO / Florence images, command panels and STOP / RESET buttons |
 | `patches/` | `odin-perception-annotation-boxes.patch` (separate `Odin-perception` repository: boxes were never drawn on the annotated image) and `odin_ros_driver-optional-no-raw-rgb.patch` (optional switch to publish only the compressed image) |
 
@@ -173,8 +176,8 @@ The scripts expect these locations (they can be changed inside the scripts).
 `install.sh` copies the scripts to `~/odin_test`, `~/ons2_docker` and `~/odin_nav_stack/drv0144`, creates `network.env` and
 `control_command_agx.yaml` if missing (never overwrites them), downloads the official YOLOv5l weights (`agx/yolo_trt/get_weights.sh`, checked by
 sha256) and can build the TensorRT engine inside `odin-gpu` (`agx/yolo_trt/build_engine.sh`, no TensorRT on the host). You still copy the map file
-yourself, and the optional watchdog needs sudo. `install.sh --check` was run on the Go2; the install, `--ons2` and `--engine` steps are written
-but **not tested yet**. The manual steps below are what it does.
+yourself, and the optional watchdog needs sudo. On 27 Nov 2026 all of it was run on the Go2 from a fresh clone: `install.sh --check` (13 of 13 ok), `install.sh`, `--ons2` (workspace built) and
+`--engine` (engine built, 95.6 MB). The manual steps below are what it does.
 
 **Go2 computer**
 1. This repository at `~/ons2`, built inside the container as upstream describes.
@@ -336,6 +339,21 @@ instead of running them on the host. The ROS side stays in `odin-agx` (`yolo`, `
 bridge (so with the bridge running by hand, its safety check fails on purpose). With the image `odin-gpu:go2` on the machine and the GPU path it expects three
 containers (`odin-agx`, `ons2-go2`, `odin-gpu`) and checks their processes; `GPU_MODE=host` forces the host mode. SSH targets and passwords come from the environment (`GO2_SSH`, `GO2_SSHPASS`, ...); see the header of the script. `GO2_SSH=local` runs the whole test on the Go2 itself (no SSH, no password). `CLOUD=1` also starts `cloud_publisher` (`--with-cloud`) and verifies its messages (envelope, identity, `odin.pose.v1`, `odin.status.v1`); see `cloud/README.md`.
 
+### Full test of the stack, with AWS and walking (what was run on 27 Nov 2026)
+
+On the Go2, from `~/demo-go2/Odin-Nav-Stack2` (the cloud side is in ardia-robotics, see `cloud/README.md`):
+
+1. **Automated: start and check, legs still.** `CLOUD=1 GO2_SSH=local ./go2_agx/test_stack.sh all` runs the preflight (12 checks, including the cloud files and the bridge image), starts everything in order with the `cloud` window, and verifies it. Result: **42 passed, 0 failed** (containers, driver and AI processes, YOLO and Florence-2 services, ROS nodes, relocalization, depth, camera, `list`, the `cloud_publisher` messages).
+2. **YOLO and Florence-2 by hand.** Publish `list` on `/yolo/command` (answers on `/yolo/console`): `chair 0.79, 2.27 m ahead`. Publish `chair` on `/florence/command`: `F1 chair 1, 2.31 m, map (0.53, 1.69)`, and `list` shows `F1`. Note: `/florence/result` is latched, so reading it right after sending can show the old greeting; `/yolo/console` shows the new `Florence-2 sent 1 'chair'` line.
+3. **AWS** (`cloud/README.md`): `scripts/go2_odin/preflight_aws.sh`, `start.sh --aws --stream`, `check.sh`, the MQTT test client and the KVS viewer.
+4. **Navigation, legs still.** Without `--with-bridge`, `go F1` starts a mission: the status shows `NAVIGATING` with the goal and distance (1.87 m, constant: the robot does not move), and `rosservice call /waypoint_manager/cancel` ends it (`CANCELLED`).
+5. **Walking** (remote in hand, clear floor): `ons2_stop.sh`, then `ons2_start.sh --map=restaurant_walls --with-yolo-agx --with-cloud --with-bridge` (the robot stands up by itself). The restart clears the saved objects, so search `chair` again, then run `walk_monitor.py` (it sends `go F1`, prints the mission every 2 s and stops the robot on a stall):
+   ```
+   docker exec ons2-go2 bash -c "source /opt/ros/noetic/setup.bash; source ~/ons2/ros_ws/devel/setup.bash; python3 ~/ons2/go2_agx/walk_monitor.py 100"
+   ```
+   Result on 27 Nov: from 1.85 m, the robot walked 1.52 m in about 6 s, turned to face the chair (`ALIGNING`) and the mission ended `COMPLETED`, about 0.6 to 0.7 m from the chair. No stall in this run (the earlier `go 2` run stalled at 1.3 m). After the mission ended, the position changed by up to about 0.3 m over 30 s with the walking command at zero; not explained yet.
+6. **Stop:** `ons2_stop.sh` (the robot sits down), `scripts/go2_odin/stop.sh`, `stop_yolo_gpu_agx.sh`, `stop_odin_agx.sh all`, `stop_odin_remote.sh`, `stop_bridge.sh`.
+
 ### Go2 container `ons2-go2`
 
 One container (image `ons2:go2`) holds the ROS 1 master and ONS2. `start_odin_remote.sh` creates it and starts the master
@@ -404,6 +422,7 @@ computer and the AGX, with the same values. The scripts stop with a message whil
 - With TensorRT the detector keeps up with the camera (~10 Hz); with the PyTorch fallback it runs at about 4 Hz.
   Detection of small or partially hidden objects from the robot's low viewpoint is limited.
 - Florence-2 *base* finds and describes objects but does not answer free-form questions.
+- `go N` stalled once (27 Nov, `go 2`: NeuPAN kept sending about 0.1 m/s with no movement and the mission gave up 1.3 m from the chair; cause not found). A later `go F1` on the same images completed. One success is not a fix.
 
 ---
 
