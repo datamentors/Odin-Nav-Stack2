@@ -96,9 +96,12 @@ COPY ros_ws/src/pcd2pgm                     /opt/odin/ros_ws/src/pcd2pgm
 COPY ros_ws/src/pointcloud_saver            /opt/odin/ros_ws/src/pointcloud_saver
 COPY scripts                                /opt/odin/scripts
 
-RUN bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash \
+# Same build as the working image: ROS 1 package.xml for the driver, isolated build, and the SYSTEM python
+# (conda's python 3.13 is first on PATH and has no empy, which catkin needs).
+RUN cp /opt/odin/ros_ws/src/odin_ros_driver/package_ros1.xml /opt/odin/ros_ws/src/odin_ros_driver/package.xml \
+ && bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash \
     && cd /opt/odin/ros_ws \
-    && catkin_make -DCMAKE_BUILD_TYPE=Release"
+    && catkin_make_isolated --merge --cmake-args -DCMAKE_BUILD_TYPE=Release -DPYTHON_EXECUTABLE=/usr/bin/python3 -DBUILD_SYSTEM=ROS1"
 
 # -----------------------------------------------------------------------------
 # 5. Persistent map mount points (see docker-compose.yml "Persistent map data")
