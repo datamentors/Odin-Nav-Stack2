@@ -278,12 +278,15 @@ Runs the two GPU model services, as the processes `yolosvc` (YOLOv5l TensorRT, p
 instead of running them on the host. The ROS side stays in `odin-agx` (`yolo`, `capture`, `relay`). Host network, so the addresses
 `127.0.0.1:8750` / `:8740` do not change.
 
-- **Image:** `odin-gpu:go2`, from `agx/docker/Dockerfile.gpu` (NVIDIA JetPack 6.1 image: CUDA 12.6, cuDNN 9, TensorRT 10.3, Python 3.10,
-  plus `libopenblas0`, which the PyTorch wheel needs). About 5.6 GB to download, 15.5 GB on disk. Build it once on the machine,
-  no build context needed: `docker build -t odin-gpu:go2 - < agx/docker/Dockerfile.gpu`.
-- **Needs on the host:** the Docker `nvidia` runtime (it mounts only the GPU driver; CUDA, cuDNN and TensorRT come from the image), a JetPack 6.x
-  host, and the same files as the host mode: `~/odin-perception` (the venv with PyTorch and the Florence-2 model) and `~/odin_test`
-  (service code, YOLOv5l weights, the TensorRT engine). They are mounted at the same paths, so nothing is copied into the image.
+- **Image:** `odin-gpu:go2`, from `agx/docker/Dockerfile.gpu` (NVIDIA JetPack 6.1 image: CUDA 12.6, cuDNN 9, TensorRT 10.3, Python 3.10). It also
+  holds the whole Odin-perception setup: cuSPARSELt, a virtualenv with torch 2.8 (Jetson wheel) and the packages pinned in
+  `agx/docker/perception-requirements.txt`, the Odin-perception code at a pinned commit with `patches/odin-perception-annotation-boxes.patch`,
+  and the Florence-2 model at a pinned revision (downloaded while building; later runs need no internet). Label `odin.perception=baked`.
+  Build once from the repository root (internet needed): `docker build -f go2_agx/agx/docker/Dockerfile.gpu -t odin-gpu:go2 .`
+  (`odin-yolo:0144` has the same Odin-perception code baked in for the frame server).
+- **Needs on the host:** the Docker `nvidia` runtime (it mounts only the GPU driver; CUDA, cuDNN, TensorRT and Odin-perception come from the
+  images), a JetPack 6.x host, and `~/odin_test` (service code, YOLOv5l weights, the TensorRT engine, mounted at the same path). An older
+  image without the label still gets `~/odin-perception` mounted from the host, as before.
 - **Selection:** `start_yolo_gpu_agx.sh` and `start_perception_agx.sh` use the container when the image exists (created on first use) and the host otherwise.
   Force one with `GPU_MODE=container` or `GPU_MODE=host`. A copy of a service left on the host is stopped first (it would hold the port).
 - **Stop:** `stop_yolo_gpu_agx.sh` stops the YOLO service (the container stays); `stop_odin_agx.sh all` removes the container.
