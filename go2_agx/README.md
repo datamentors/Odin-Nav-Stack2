@@ -151,6 +151,7 @@ map, so they can be used by `go F#`.
 | `cloud/` | Our side of the link to AWS: `cloud_publisher.py` (JSON of pose, map, mission, YOLO, Florence-2), schemas, examples, tests, `verify_topics.py`; started with `ons2_start.sh --with-cloud`. See `cloud/README.md` |
 | `build_images.sh`, `push_images.sh`, `pull_images.sh` | build the 5 images from the repo; publish the three that run the stack to AWS ECR (dry run by default) / pull them on another Go2 |
 | `install.sh`, `test_stack.sh`, `walk_monitor.py` | host set-up; start and check everything (`CLOUD=1` adds the cloud link); the walking test of one goal (moves the robot with the chassis bridge on) |
+| `semantic_map/` | Semantic map MVP (`semantic_map_node.py`, Go2): objects seen by the detectors kept in the map frame with metadata, `/semantic_map/objects` + a top-view image; start with `ons2_start.sh ... --with-semantic-map`. See its `README.md` |
 | `foxglove/` | Layout with 3D view, camera / YOLO / Florence images, command panels and STOP / RESET buttons |
 | `patches/` | `odin-perception-annotation-boxes.patch` (separate `Odin-perception` repository: boxes were never drawn on the annotated image) and `odin_ros_driver-optional-no-raw-rgb.patch` (optional switch to publish only the compressed image) |
 

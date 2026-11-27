@@ -101,6 +101,11 @@ if [[ "${ONS2_CLOUD:-0}" = "1" ]]; then
   ons2_start_window "${SESSION}" cloud "${ENV_PREFIX} && export STACK_COMMIT=\$(cat ${REPO_ROOT}/.stack_commit 2>/dev/null) STACK_IMAGES=ons2=ons2:go2,gpu=odin-gpu:go2 && python3 ${REPO_ROOT}/go2_agx/cloud/cloud_publisher.py _config:=${REPO_ROOT}/go2_agx/cloud/config/cloud_publisher.yaml 2>&1 | tee ${LOG_DIR}/cloud_node.log"
   ons2_log "w6 cloud_publisher (window cloud; needs the ROS 1 -> ROS 2 bridge odin-bridge for the cloud side)"
 fi
+if [[ "${ONS2_SEMMAP:-0}" = "1" ]]; then
+  # OUR: --with-semantic-map = semantic map MVP (go2_agx/semantic_map/README.md): /perception/objects -> objects in the map frame
+  ons2_start_window "${SESSION}" semmap "${ENV_PREFIX} && python3 ${REPO_ROOT}/go2_agx/semantic_map/semantic_map_node.py 2>&1 | tee ${LOG_DIR}/semantic_map.log"
+  ons2_log "w7 semantic_map (window semmap: /semantic_map/objects, /semantic_map/bev)"
+fi
 ons2_start_window "${SESSION}" control "${ENV_PREFIX} && export PYTHONPATH=/opt/ros/noetic/lib/python3/dist-packages:\${PYTHONPATH:-} && /usr/bin/python3 ${REPO_ROOT}/ros_ws/scripts/test_nav_control_rospy.py --allow-motion"
 ons2_log "=================================================="
 ons2_log "Go2 stack started (Odin1 on AGX) ${BRIDGE_TXT}"
