@@ -7,7 +7,8 @@
 #                      and the YOLO / Florence-2 nodes when the GPU environment exists). No AGX Orin, no cable.
 #   two                the AGX Orin runs odin-agx, the Go2 runs ons2-go2 (the Ethernet cable between them).
 # YOLO (YOLO_MODE=auto|gpu|cpu):
-#   gpu  YOLOv5l TensorRT + Florence-2 on the GPU (needs ~/odin-perception/.venv, TensorRT, the weights and the engine)
+#   gpu  GPU detector (detector/: YOLOv5l TensorRT by default, or what ~/.config/go2_agx/detector.env selects) + Florence-2
+#        (needs the odin-gpu image or ~/odin-perception/.venv, and the weights / engine)
 #   cpu  ONS2's own YOLOv5s on the CPU (ons2_start.sh --with-yolo), no Florence-2
 #   auto = gpu when the GPU environment exists on the machine that runs odin-agx, else cpu
 #
@@ -148,7 +149,7 @@ do_start() {
   fi
   step "odin-agx: depth"                              a '~/odin_test/start_depth_agx.sh'
   if [ "$ym" = gpu ]; then
-    step "odin-agx: YOLO (GPU service + detector)"    a '~/odin_test/start_yolo_gpu_agx.sh'
+    step "odin-agx: GPU detector (service + node)"    a '~/odin_test/start_yolo_gpu_agx.sh'
     step "odin-agx: Florence-2 (frame server + relay)" a '~/odin_test/start_perception_agx.sh'
     step "Go2: ONS2 (no chassis bridge, map $MAP, YOLO on the GPU)" g "~/ons2_docker/ons2_start.sh --map=$MAP --with-yolo-agx$CFLAG"
   else
@@ -196,7 +197,8 @@ do_verify() {
     done
   fi
   if [ "$ym" = gpu ]; then
-    chk "YOLO GPU service answers (127.0.0.1:8750)" a 'curl -sf -m 3 http://127.0.0.1:8750/health'
+    chk "detector service answers (127.0.0.1:8750)" a 'curl -sf -m 3 http://127.0.0.1:8750/health'
+    a 'curl -sf -m 3 http://127.0.0.1:8750/health' | sed 's/^/    /'
     chk "Florence frame server has frames (127.0.0.1:8730)" a 'curl -sf -m 3 http://127.0.0.1:8730/meta.json | grep -q "\"has_frame\": true"'
   fi
 

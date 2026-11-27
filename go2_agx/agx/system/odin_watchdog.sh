@@ -10,7 +10,7 @@
 # It does nothing when the driver is not wanted (you stopped it on purpose with stop_odin_agx.sh),
 # while start_odin_agx.sh is running, or while the Go2 network is down (restarting would not help).
 # 17 Nov: ALSO checks the AGX "companions" while the driver is fine: if the depth (/pcd2depth_node), YOLO
-# (/yolo_detector) or Florence relay (/florence_cmd_relay) node is missing from the Go2 ROS master twice in a row
+# (/yolo_detector, the GPU detector node) or Florence relay (/florence_cmd_relay) node is missing from the Go2 ROS master twice in a row
 # (the Go2 master was restarted, e.g. start_odin_remote.sh run again: they stay registered in the OLD master and
 # Foxglove says "Image topic does not exist"), it relaunches that start script. Only components that are "wanted"
 # (started on purpose), never while a start script runs, at most once per 2 min each.

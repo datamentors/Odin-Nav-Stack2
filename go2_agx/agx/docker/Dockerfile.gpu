@@ -1,7 +1,8 @@
 # Image odin-gpu:go2 - the GPU model services of the Go2 stack, everything inside (nothing to copy from the host):
 #   CUDA 12.6 / cuDNN 9 / TensorRT 10.3 (NVIDIA JetPack image) + Python 3.10 virtualenv with torch 2.8 (Jetson wheel),
 #   the Odin-perception code (pinned commit + our patch) and the Florence-2 model (pinned revision, downloaded at build time).
-# Only the YOLO weights/engine (built per device) and the service scripts still come from the host (~/odin_test, mounted).
+# It runs the Florence-2 service and the detector service (detector/: YOLOv5l or RF-DETR + optional tracker, WITH_TRACKERS below).
+# Only the detector weights/engines (built per device) and the service scripts still come from the host (~/odin_test, mounted).
 # Build from the REPOSITORY ROOT (needs the patch and the requirements file; internet for the model and the wheels):
 #   docker build -f go2_agx/agx/docker/Dockerfile.gpu -t odin-gpu:go2 .
 # JetPack 6 hosts need no CUDA packages for this: the nvidia runtime only supplies the driver, the rest is here.
@@ -25,6 +26,23 @@ RUN python3 -m venv /opt/odin-perception/.venv \
  && /opt/odin-perception/.venv/bin/pip install --no-cache-dir -r /tmp/perception-requirements.txt
 RUN /opt/odin-perception/.venv/bin/python -c "from huggingface_hub import snapshot_download; \
 snapshot_download(repo_id='microsoft/Florence-2-base-ft', revision='$FLORENCE_REVISION', local_dir='/opt/odin-perception/models/florence2-base-ft')"
+# Optional trackers for the detector service (detector/trackers.py): BoT-SORT (BoxMOT, AGPL-3.0) and SAM 2.1.
+#   docker build --build-arg WITH_TRACKERS=1 -f go2_agx/agx/docker/Dockerfile.gpu -t odin-gpu:go2 .
+# Installed into the same venv WITHOUT changing anything already in it (constraints = its pip freeze; the build fails
+# instead of upgrading torch/numpy/transformers). BoxMOT goes in with --no-deps (it asks for NumPy 2, which breaks the
+# Jetson torch) plus the few modules it imports. Model files (Re-ID engine, SAM 2 checkpoint) come from
+# detector/get_models.sh into ~/odin_test/models, not from the image.
+ARG WITH_TRACKERS=0
+ARG BOXMOT_VERSION=26.0.0
+ARG SAM2_COMMIT=2b90b9f5ceec907a1c18123530e92e794ad901a4
+RUN if [ "$WITH_TRACKERS" = 1 ]; then \
+      P=/opt/odin-perception/.venv/bin/pip && $P freeze > /tmp/constraints.txt \
+   && $P install --no-cache-dir --no-deps boxmot==$BOXMOT_VERSION \
+   && $P install --no-cache-dir -c /tmp/constraints.txt filterpy "lapcpp>=1,<2" "gdown>=5.1,<6" rich \
+   && $P install --no-cache-dir -c /tmp/constraints.txt "setuptools>=69,<76" wheel hydra-core iopath \
+   && SAM2_BUILD_CUDA=0 $P install --no-cache-dir --no-build-isolation --no-deps git+https://github.com/facebookresearch/sam2.git@$SAM2_COMMIT \
+   && /opt/odin-perception/.venv/bin/python -c "import boxmot, sam2; print('trackers OK')" ; fi
+LABEL odin.trackers=$WITH_TRACKERS
 ENV PYTHONUNBUFFERED=1 NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=all HF_HUB_OFFLINE=1 ODIN_PERCEPTION=/opt/odin-perception
 LABEL odin.perception=baked
 CMD ["sleep","infinity"]

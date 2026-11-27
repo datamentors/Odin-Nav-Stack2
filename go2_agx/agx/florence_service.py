@@ -9,7 +9,7 @@
 #                            first (bottom of the image), left to right inside each row. Numbers stay valid
 #                            until the next search.
 #   far chair             -> FAR search (~12 s): whole image + 6 overlapping tiles at full resolution; adds only the
-#                            small objects the whole image missed; for classes YOLO knows, YOLOv5l (GPU service :8750)
+#                            small objects the whole image missed; for classes the detector knows, the GPU detector (:8750)
 #                            must confirm each one; others are marked "?" (unverified)
 #   describe 3            -> describes object #3 of the last search (Florence-2 caption of that crop)
 #   show                  -> publishes the last numbered image again and repeats the list
@@ -34,7 +34,7 @@ from inspection_perception.annotation import _load_font, encode_jpeg  # noqa
 DEFAULT_LIST = os.environ.get("FLORENCE_CHECKLIST", os.path.expanduser("~/perception_test/checklist.yaml"))
 EVIDENCE = os.path.expanduser("~/perception_test/evidence")
 ANNOTATE_URL = "http://127.0.0.1:8730"
-YOLO_URL = "http://127.0.0.1:8750"   # our YOLOv5l GPU service (start_yolo_gpu_agx.sh)
+YOLO_URL = "http://127.0.0.1:8750"   # our GPU detector service (start_yolo_gpu_agx.sh: YOLOv5l or RF-DETR)
 FOV_DEG = 90.0            # fallback only: undistorted camera, about 90 deg wide
 
 
@@ -229,33 +229,27 @@ def _yolo_names():
 
 
 def _yolo_confirms(rgb, b, cls_id):
-    """YOLOv5l (GPU service) on crops around box b: does it see class cls_id overlapping b? None = service down.
-    YOLO needs context: on a tight crop it misses a chair it sees at 0.89 with more room around it, so it tries a
-    crop with 1x and then 2x the object size as margin before saying no."""
-    import cv2
+    """The GPU detector service (YOLOv5l or RF-DETR, detector/detector_service.py) on crops around box b: does it see
+    class cls_id overlapping b? None = service down. The detector needs context: on a tight crop it misses a chair it
+    sees at 0.89 with more room around it, so it tries a crop with 1x and then 2x the object size as margin before
+    saying no. track=0: one-off images, the tracker of the live stream is not touched."""
     H, W = rgb.shape[:2]
     bw, bh = b["x1"] - b["x0"], b["y1"] - b["y0"]
     for frac in (1.0, 2.0):
         m = max(frac * max(bw, bh), 40)
         x0, y0 = int(max(0, b["x0"] - m)), int(max(0, b["y0"] - m))
         x1, y1 = int(min(W, b["x1"] + m)), int(min(H, b["y1"] + m))
-        crop = np.ascontiguousarray(rgb[y0:y1, x0:x1, ::-1])           # BGR, as their detector sends it
-        ch, cw = crop.shape[:2]
-        r = 640.0 / max(ch, cw)
-        nw, nh = int(round(cw * r)), int(round(ch * r))
-        lb = cv2.resize(crop, (nw, nh))
-        pw, ph = (32 - nw % 32) % 32, (32 - nh % 32) % 32
-        lb = cv2.copyMakeBorder(lb, 0, ph, 0, pw, cv2.BORDER_CONSTANT, value=(114, 114, 114))
+        crop = np.ascontiguousarray(rgb[y0:y1, x0:x1, ::-1])           # BGR, as the ROS node sends frames
         try:
-            req = urllib.request.Request(YOLO_URL + "/infer?conf=0.20", data=lb.tobytes(),
-                                         headers={"X-Shape": "%d,%d" % lb.shape[:2]}, method="POST")
-            rows = json.loads(urllib.request.urlopen(req, timeout=10).read())
+            req = urllib.request.Request(YOLO_URL + "/detect?conf=0.20&track=0", data=crop.tobytes(),
+                                         headers={"X-Shape": "%d,%d" % crop.shape[:2]}, method="POST")
+            dets = json.loads(urllib.request.urlopen(req, timeout=10).read())["objects"]
         except Exception:
             return None
-        tb = {"x0": (b["x0"] - x0) * r, "y0": (b["y0"] - y0) * r, "x1": (b["x1"] - x0) * r, "y1": (b["y1"] - y0) * r}
-        for x_0, y_0, x_1, y_1, conf, k in rows:
-            if int(k) == cls_id:
-                yb = {"x0": x_0, "y0": y_0, "x1": x_1, "y1": y_1}
+        tb = {"x0": b["x0"] - x0, "y0": b["y0"] - y0, "x1": b["x1"] - x0, "y1": b["y1"] - y0}
+        for d in dets:
+            if d["cls"] == cls_id:
+                yb = dict(zip(("x0", "y0", "x1", "y1"), d["box"]))
                 if _inter(tb, yb) > 0.3 * min(_area(tb), _area(yb)):
                     return True
         if x0 == 0 and y0 == 0 and x1 == W and y1 == H:
@@ -316,7 +310,7 @@ def find_far(phrase, img_path=None):
         pass
     txt = list_text(phrase, objs, time.time() - t)
     if cls_id is not None:
-        note = "Far search: whole image + 6 tiles -> %d extra far object(s); YOLOv5l confirmed them" % len(kept)
+        note = "Far search: whole image + 6 tiles -> %d extra far object(s); the detector confirmed them" % len(kept)
         note += ", %d discarded (YOLO did not see a %s there)." % (dropped, phrase) if dropped else "."
         if unverified:
             note += " %d could not be checked (YOLO service down): marked '?'." % unverified

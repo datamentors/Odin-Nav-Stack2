@@ -2,7 +2,7 @@
 
 This branch adapts **Odin Navigation Stack 2 (ONS2)** to a Unitree Go2 where the Odin1 sensor and the
 perception models run on an external **NVIDIA Jetson AGX Orin**, while navigation runs on the Go2's own computer.
-It adds a GPU object detector (YOLOv5l with TensorRT), open-vocabulary search with Florence-2, "go to" / "follow" commands from Foxglove,
+It adds a GPU object detector (YOLOv5l or RF-DETR with TensorRT, optional tracker, §5.1), open-vocabulary search with Florence-2, "go to" / "follow" commands from Foxglove,
 extra safety limits for walking among people, and automatic recovery of the sensor pipeline.
 
 Everything upstream keeps working: the changes are a new robot profile, new scripts and launch files, and one
@@ -20,7 +20,7 @@ flowchart LR
       D["pcd2depth<br/>(depth image)"]
       Y["YOLO node + Florence-2<br/>frame server and relay"]
     end
-    G["GPU model services<br/>YOLOv5l (TensorRT FP16), Florence-2<br/>(optional container odin-gpu, otherwise on the host)"]
+    G["GPU model services<br/>detector (YOLOv5l / RF-DETR + tracker), Florence-2<br/>(optional container odin-gpu, otherwise on the host)"]
     W["watchdog + autostart"]
     Y <-- "HTTP, 127.0.0.1" --> G
   end
@@ -43,7 +43,7 @@ flowchart LR
 
 | Machine | Runs |
 |---|---|
-| **Jetson AGX Orin** | One container `odin-agx` with the Odin1 driver (the color camera needs USB 3), depth image, YOLO detector node, Florence-2 frame server and relay (separate processes inside it). The YOLOv5l (TensorRT) and Florence-2 GPU services run on the host, or in the optional container `odin-gpu` (see §GPU container). On the host: watchdog and autostart services |
+| **Jetson AGX Orin** | One container `odin-agx` with the Odin1 driver (the color camera needs USB 3), depth image, YOLO detector node, Florence-2 frame server and relay (separate processes inside it). The detector (YOLOv5l or RF-DETR + tracker) and Florence-2 GPU services run on the host, or in the optional container `odin-gpu` (see §GPU container). On the host: watchdog and autostart services |
 | **Go2 computer** | One container `ons2-go2` with the ROS 1 master, ONS2, command bridge, optional chassis bridge and Foxglove bridge (separate processes inside it; host ROS 2 untouched). Optional, only for the remote web monitor: a second container `odin-bridge` (ROS 1 ↔ ROS 2) |
 | **Laptop** | Foxglove layout with command panels and STOP / RESET buttons |
 
@@ -106,6 +106,7 @@ A copy of `robots/go2/` with:
 | `all` | Run the full checklist (`FLORENCE_CHECKLIST`) |
 | `send on` · `send off` · `send 2 3` · `send all` | Pass Florence results to the command bridge as F1, F2 … (automatic by default) |
 | `clean` | Remove all F objects and their markers |
+| `track 2` · `untrack` | Make object #2 of the last search the target of the GPU detector's tracker (§5.1), or clear it |
 
 Florence objects get their distance from the lidar depth image at the moment of the photo and are placed on the
 map, so they can be used by `go F#`.
@@ -134,8 +135,10 @@ map, so they can be used by `go F#`.
 |---|---|
 | `go2/` | `start_odin_remote.sh` / `stop_odin_remote.sh` (create / remove the container `ons2-go2` with the ROS 1 master), `ons2_start.sh` / `ons2_stop.sh` (start / stop ONS2 inside it), `Dockerfile` (image `ons2:go2`), `start_bridge.sh` / `stop_bridge.sh` (optional ROS 1 ↔ ROS 2 bridge, container `odin-bridge`), `fastdds_udp.xml` (for the bridge), `remote_monitor_start.sh` (upstream web monitor on the Go2 host) |
 | `agx/` | `agx_lib.sh` (helpers for the single container `odin-agx`, one process per component, and for the optional container `odin-gpu`), `start_odin_agx.sh` / `stop_odin_agx.sh` (creates the container, starts / stops the Odin1 driver), `start_depth_agx.sh`, `start_yolo_gpu_agx.sh` / `stop_yolo_gpu_agx.sh`, `start_perception_agx.sh` (Florence-2), `florence_service.py`, `florence_cmd_relay.py`, `cam_stream.py` (MJPEG camera view), `fix_odin_usb.sh`, `control_command_agx.yaml`, `odin_depth.launch`, `checklist.example.yaml` (for the Florence command `all`) |
-| `agx/yolo_gpu/` | `yolo_gpu_service.py` (YOLOv5l on the GPU, HTTP on 127.0.0.1), `yolo_detector_gpu.py` (ROS node, same topics as upstream `yolo_detector`), `yolo5_stubs.py` |
-| `agx/yolo_trt/` | `export_onnx.py` (YOLOv5l → ONNX), `yolo_trt_service.py` (same HTTP API as `yolo_gpu_service.py`, TensorRT engine), `compare.py` (PyTorch vs TensorRT on the same images) |
+| `agx/detector/` | The GPU detector, see §5.1: `detector_service.py` (HTTP service on 127.0.0.1:8750: detector + tracker), `detectors.py` (YOLOv5, RF-DETR), `trackers.py` (IoU, BoT-SORT, SAM 2), `detector_node.py` (ROS node, upstream `yolo_detector` topics + tracks), `depth3d.py` (box → 3D, shared with the Florence relay), `get_models.sh`, `export_rfdetr.py`, `export_reid.py` |
+| `agx/yolo_gpu/` | `yolo5_stubs.py` (lets the YOLOv5 code load `.pt` weights without its training extras) |
+| `agx/yolo_trt/` | `get_weights.sh` (YOLOv5 weights), `export_onnx.py` (YOLOv5l → ONNX), `build_engine.sh` (TensorRT FP16 engine) |
+| `detector.env.example` | Detector / tracker selection, copied to `~/.config/go2_agx/detector.env` |
 | `agx/system/` | `odin_watchdog.sh`, `odin_autostart.sh`, `odin_usb_tuning.sh`, their systemd units and the udev rule |
 | `agx/docker/` | `Dockerfile.driver` (image `odin-drv:0144`, build base), `Dockerfile.yolo` (image `odin-yolo:0144`, the image the container `odin-agx` runs), `Dockerfile.gpu` (image `odin-gpu:go2`, the optional container for the GPU model services) |
 | `cloud/` | Our side of the link to AWS: `cloud_publisher.py` (JSON of pose, map, mission, YOLO, Florence-2), schemas, examples, tests, `verify_topics.py`; started with `ons2_start.sh --with-cloud`. See `cloud/README.md` |
@@ -146,7 +149,7 @@ map, so they can be used by `go F#`.
 
 **One container (AGX):** all ROS 1 parts run in `odin-agx` as processes named `driver`, `cam`, `depth`, `yolo`,
 `capture` and `relay`. Each has a pid file and a "wanted" mark in `/run/odin/` and a log in `~/odin_test/logs/agx/`.
-Restarting the driver keeps the container and the other processes. The GPU model services (YOLOv5l TensorRT/PyTorch,
+Restarting the driver keeps the container and the other processes. The GPU model services (detector,
 Florence-2) are not in this container: it is ROS Noetic (Python 3.8) and the JetPack 6 GPU wheels are Python 3.10. They run
 in the optional container `odin-gpu` when its image exists, otherwise on the host (see §GPU container).
 
@@ -155,11 +158,86 @@ hub if needed), and relaunches the depth, YOLO and Florence processes if they cr
 **Autostart (AGX):** at boot, waits for the Odin1, the Ethernet link and the ROS master, then starts everything in
 order with retries.
 
-**YOLO on TensorRT (AGX):** `start_yolo_gpu_agx.sh` serves YOLOv5l from a TensorRT FP16 engine when it exists, and
-falls back to the PyTorch service by itself if the engine is missing or does not load. Measured on the AGX in the
-30 W power mode, with Florence-2 sharing the GPU: about 45–50 ms per image instead of 300–430 ms, so the detector
-keeps up with the camera (~10 Hz, ~0.15 s latency, before ~4 Hz and ~0.3 s), with the same detections
-(47 of 47 on the test images, confidence within ±0.01).
+**YOLO on TensorRT (AGX):** the default detector is YOLOv5l from a TensorRT FP16 engine when it exists, with the
+PyTorch weights as fallback if the engine is missing or does not load. Measured on the AGX in the 30 W power mode, with
+Florence-2 sharing the GPU: about 45–50 ms per image instead of 300–430 ms, so the detector keeps up with the camera
+(~10 Hz, ~0.15 s latency, before ~4 Hz and ~0.3 s), with the same detections (47 of 47 on the test images, confidence
+within ±0.01).
+
+### 5.1 GPU detector: selectable detector + tracker
+
+`start_yolo_gpu_agx.sh` starts two processes: the service `detector/detector_service.py` (process `yolosvc`, Python 3.10 +
+CUDA, in `odin-gpu` or on the host, HTTP on `127.0.0.1:8750`) and the ROS node `detector/detector_node.py` (process `yolo`
+in `odin-agx`, node `/yolo_detector`). The node sends each new camera frame, resized to the model size, to the service and
+publishes the results; it drops frames while the model runs, so it always works on the newest one.
+
+**Selection.** In `~/.config/go2_agx/detector.env` (template `go2_agx/detector.env.example`; the watchdog and autostart use it
+too), or for one start: `start_yolo_gpu_agx.sh --detector rfdetr --tracker botsort`.
+
+| `DETECTOR` | Model | Weights (default, fallbacks in order) | Measured on the AGX (30 W), per frame |
+|---|---|---|---|
+| `yolov5` (default) | YOLOv5l, COCO | `~/odin_test/yolo_trt/yolov5l_fp16.engine`, then `yolov5l.pt` (PyTorch) | 55 ms (18 FPS); 80 ms with Florence-2 busy |
+| `rfdetr` | RF-DETR Large / Medium, COCO (Apache-2.0) | `~/odin_test/models/rfdetr_large_fp16.engine`, then `rfdetr_medium_fp16.engine` | Large 42 ms (24 FPS), Medium 32 ms (32 FPS); 80 / 60 ms with Florence-2 busy |
+
+| `TRACKER` | What | Needs | Measured |
+|---|---|---|---|
+| `none` (default) | detections only | — | — |
+| `iou` | an ID per detection, greedy IoU per class | — | < 1 ms |
+| `botsort` | BoT-SORT with camera-motion compensation | image with `WITH_TRACKERS=1` | RF-DETR L + BoT-SORT: 57 ms |
+| `botsort_reid` | BoT-SORT + OSNet x0.25 appearance (keeps IDs through occlusions of up to ~4 s) | `WITH_TRACKERS=1`, `get_models.sh reid` | RF-DETR L + BoT-SORT + Re-ID: 85 ms (p95 140 ms) |
+| `sam2` | SAM 2.1 tiny @512 on ONE object given by a box, any class (e.g. a Florence-2 result) | `WITH_TRACKERS=1`, `get_models.sh sam2` | ~85 ms per frame, ~145 ms with Florence-2 busy |
+
+Times are from the detector benchmark (branch `go2_rf_detr_bench`), not yet from this service on the robot. That benchmark
+also found: tiling the image is slower and less accurate; SAM 2 does not re-acquire an object reliably after it leaves the
+view; Re-ID does not recognise a person who comes back somewhere else. The official `sam2` package has no streaming video
+API, so `sam2` here prompts the image predictor with the previous box each frame (no memory); a sam2 build that provides
+`build_sam2_camera_predictor` (streaming, with memory) is used automatically when installed.
+
+**Models.** YOLOv5l: `yolo_trt/get_weights.sh` + `yolo_trt/build_engine.sh` (as before). Others, into `~/odin_test/models/`
+(engines are built inside `odin-gpu` and only load with that TensorRT version; robot idle):
+```bash
+~/odin_test/detector/get_models.sh rfdetr large     # RF-DETR -> ONNX (throwaway venv, CPU) -> FP16 engine, 5-10 min
+~/odin_test/detector/get_models.sh reid             # OSNet Re-ID engine for botsort_reid
+~/odin_test/detector/get_models.sh sam2 tiny        # SAM 2.1 checkpoint
+```
+BoT-SORT and SAM 2 need their Python packages in the image: `WITH_TRACKERS=1 ./go2_agx/build_images.sh --force`
+(or `docker build --build-arg WITH_TRACKERS=1 ...`). They are added to the Odin-perception venv without changing any
+package already in it. BoxMOT (BoT-SORT) is AGPL-3.0: check before using it in a product.
+
+**Inputs and outputs of the GPU detector** (node `/yolo_detector`; full schemas in the header of `detector_node.py`):
+
+| Direction | Topic | Type | Contents |
+|---|---|---|---|
+| in | `/odin1/image/undistorted` | `sensor_msgs/Image` | camera frames (newest only; the debug image and masks are at this resolution) |
+| in | `/odin1/depth_img_competetion` | `sensor_msgs/Image` | lidar depth in the same image, for 3D (closest in time) |
+| in | `/yolo/set_conf` | `std_msgs/Float32` | confidence threshold, live |
+| in | `/perception/target/select` | `std_msgs/String` | JSON: `{"box": [x1,y1,x2,y2], "stamp": <s>, "name": "chair"}` (full-resolution px of the frame at `stamp`), `{"name": "person"}` (most confident current track of that class), `{"track_id": 3}` or `{"clear": true}`. The Florence-2 panel sends it with `track N` / `untrack` |
+| out | `/perception/objects` | `std_msgs/String` | JSON per frame, everything in one message: `stamp`, `frame_id`, `image_size`, `detector`, `tracker`, `target` (`{id, visible}` or null) and `objects`: `[{name, cls, score, box (px), track_id or null, target, source ("detector" or "sam2"), mask_index or null, xyz (m, camera frame) or null, size (m) or null}]` |
+| out | `/perception/detections` | `vision_msgs/Detection2DArray` | all objects, full-resolution px (`results[0].id` = class id, -1 = unknown) |
+| out | `/perception/detections_3d` | `vision_msgs/Detection3DArray` | objects with depth: camera-frame centre + metric width/height |
+| out | `/perception/masks` (`/compressed`, PNG) | `sensor_msgs/Image` mono8 | instance label image at full resolution, same header as the camera frame: pixel = `mask_index` of an object in `/perception/objects`, 0 = none |
+| out | `/perception/debug_image` (`/compressed`) | `sensor_msgs/Image` | the camera frame at full resolution with tinted masks, boxes, `#track class score distance`, the target in red |
+| out | `/perception/class_names` | `std_msgs/String` (latched) | `{class id: name}` of the running detector |
+| out | `/perception/target_3d` | `geometry_msgs/PointStamped` | the target's 3D point (camera frame), when seen with depth |
+| out | `/perception/target/status` | `std_msgs/String` (latched) | result of the last selection |
+| out | `/yolo_detections`, `/yolo_detections_3d`, `/yolo_class_names` | as upstream | the upstream `yolo_ros` topics, detector objects only; `/yolo_detections_3d` only on frames with a 3D object (param `~publish_yolo_topics`, default true) |
+| out | `/yolo_debug_image` (`/compressed`) | `sensor_msgs/(Compressed)Image` | the same debug image (compressed: 800 px wide, for Foxglove over Wi-Fi) |
+| out | `/yolo/console` | `std_msgs/String` | short answers (confidence, selection) |
+
+`/perception/*` is the complete set; the `/yolo_*` topics stay so `object_query_node`, `yolo_cmd_bridge.py` and the Foxglove
+layout work unchanged with any detector (they never carry the SAM 2 object, whose class may be unknown). Images, masks and
+the debug overlay are only computed when someone subscribes. `vision_msgs` in ROS 1 has no track-ID field, so track IDs are
+in the JSON (and on the debug image). Masks come from SAM 2 today (the target only); YOLOv5 and RF-DETR are box detectors, so
+with them `/perception/masks` is all zeros. A segmentation detector can return masks as a 4th item of `detect()` and they
+appear in the same label image. Nothing in ONS2 follows `/perception/target_3d` yet.
+
+A box selection is matched against the tracks of the frame closest to its time stamp (the service keeps the last 5 s),
+so a box found by Florence-2 a few seconds earlier still picks the right track; `sam2` starts on that old frame and
+continues on the newest one.
+
+Service API (for other clients): `GET /health`, `GET /info`, `GET /names`, `POST /detect?conf=&stamp=&track=&masks=` (raw BGR
+image, header `X-Shape: h,w`), `POST /target` (JSON as above, box in pixels of the images sent); see the header of
+`detector_service.py`. Florence-2's far search uses it with `track=0` to confirm its tile boxes with whichever detector runs.
 
 ---
 
@@ -171,7 +249,7 @@ The scripts expect these locations (they can be changed inside the scripts).
 ```bash
 ./go2_agx/install.sh --check      # host check: JetPack 6, docker + nvidia runtime, disk, internet, Odin1, images, map
 ./go2_agx/build_images.sh         # the images (about 40 GB, long)
-./go2_agx/install.sh --ons2 --engine   # submodules, scripts, network.env, YOLO folders + weights, ~/ons2 build, TensorRT engine
+./go2_agx/install.sh --ons2 --engine   # submodules, scripts, network.env, detector.env, YOLO folders + weights, ~/ons2 build, TensorRT engine
 ```
 `install.sh` copies the scripts to `~/odin_test`, `~/ons2_docker` and `~/odin_nav_stack/drv0144`, creates `network.env` and
 `control_command_agx.yaml` if missing (never overwrites them), downloads the official YOLOv5l weights (`agx/yolo_trt/get_weights.sh`, checked by
@@ -209,9 +287,8 @@ yourself, and the optional watchdog needs sudo. On 27 Nov 2026 all of it was run
      --minShapes=images:1x3x256x256 --optShapes=images:1x3x544x640 --maxShapes=images:1x3x640x640 \
      --memPoolSize=workspace:2048
    ```
-   To compare it with the PyTorch service first, run it on port 8751
-   (`YOLO_GPU_PORT=8751 ~/odin-perception/.venv/bin/python yolo_trt_service.py`) and then `compare.py`.
-   Rebuild the engine after a JetPack / TensorRT update; until then the PyTorch fallback is used.
+   (or `yolo_trt/build_engine.sh`, which does both inside `odin-gpu`). Rebuild the engine after a JetPack / TensorRT
+   update; until then the PyTorch fallback is used. Other detectors and trackers: §5.1.
 
 **Both machines**
 - Keep the clocks of the Go2 and the AGX synchronized (NTP, e.g. systemd-timesyncd with a short poll interval):
@@ -266,7 +343,7 @@ add processes to it and need the driver running first. Nothing needs to be start
 |---|---|---|
 | `driver`, `cam` | `start_odin_agx.sh go2` | `driver.log`, `cam.log` |
 | `depth` | `start_depth_agx.sh` | `depth.log` |
-| `yolo` | `start_yolo_gpu_agx.sh` | `yolo.log` (the GPU service logs to `~/odin_test/logs/yolo_gpu_service.log`) |
+| `yolo` | `start_yolo_gpu_agx.sh` | `yolo.log` (the detector service logs to `~/odin_test/logs/gpu/yolosvc.log`, host mode `~/odin_test/logs/yolo_gpu_service.log`) |
 | `capture`, `relay` | `start_perception_agx.sh` | `capture.log`, `relay.log` |
 
 ```bash
@@ -274,7 +351,7 @@ docker exec odin-agx ls /run/odin                 # processes started (NAME.pid)
 docker exec odin-agx bash -c "source /opt/ros/noetic/setup.bash; rosnode list"   # ROS nodes
 tail -f ~/odin_test/logs/agx/driver.log           # follow one component
 ~/odin_test/stop_odin_agx.sh depth                # stop the driver + camera + depth (also: perception, all)
-~/odin_test/stop_yolo_gpu_agx.sh                  # stop the YOLO node and its GPU service
+~/odin_test/stop_yolo_gpu_agx.sh                  # stop the detector node and its GPU service
 ```
 
 - **Restarting the driver** (by hand or by the watchdog) keeps the container and the other processes.
@@ -287,7 +364,7 @@ tail -f ~/odin_test/logs/agx/driver.log           # follow one component
   `odin-perception-cmd`): the first `start_odin_agx.sh` removes them and creates the single container. Copy
   `agx/*` (including `agx_lib.sh`) to `~/odin_test/`, `agx/system/*.sh` to `/usr/local/bin/`, and run
   `sudo systemctl restart odin-watchdog`.
-- **GPU services are not in `odin-agx`** (Python 3.10 wheels): the YOLOv5l TensorRT / PyTorch service and Florence-2 run in
+- **GPU services are not in `odin-agx`** (Python 3.10 wheels): the detector service and Florence-2 run in
   `odin-gpu` or on the host, so `docker logs` is no longer where to look; use the log files: in `odin-gpu`
   `~/odin_test/logs/gpu/yolosvc.log` and `florence.log`, on the host `~/odin_test/logs/yolo_gpu_service.log` and
   `~/perception_test/florence_service.log`.
@@ -311,7 +388,7 @@ parts when `~/odin-perception/.venv` does not exist.
 
 ### GPU container `odin-gpu` (optional third container)
 
-Runs the two GPU model services, as the processes `yolosvc` (YOLOv5l TensorRT, port 8750) and `florence` (Florence-2, port 8740),
+Runs the two GPU model services, as the processes `yolosvc` (the detector service, §5.1, port 8750) and `florence` (Florence-2, port 8740),
 instead of running them on the host. The ROS side stays in `odin-agx` (`yolo`, `capture`, `relay`). Host network, so the addresses
 `127.0.0.1:8750` / `:8740` do not change.
 
@@ -320,13 +397,14 @@ instead of running them on the host. The ROS side stays in `odin-agx` (`yolo`, `
   `agx/docker/perception-requirements.txt`, the Odin-perception code at a pinned commit with `patches/odin-perception-annotation-boxes.patch`,
   and the Florence-2 model at a pinned revision (downloaded while building; later runs need no internet). Label `odin.perception=baked`.
   Build once from the repository root (internet needed): `docker build -f go2_agx/agx/docker/Dockerfile.gpu -t odin-gpu:go2 .`
+  (`--build-arg WITH_TRACKERS=1` adds BoT-SORT and SAM 2 for the detector service; label `odin.trackers`)
   (`odin-yolo:0144` has the same Odin-perception code baked in for the frame server).
 - **Needs on the host:** the Docker `nvidia` runtime (it mounts only the GPU driver; CUDA, cuDNN, TensorRT and Odin-perception come from the
-  images), a JetPack 6.x host, and `~/odin_test` (service code, YOLOv5l weights, the TensorRT engine, mounted at the same path). An older
+  images), a JetPack 6.x host, and `~/odin_test` (service code, detector weights and TensorRT engines, mounted at the same path). An older
   image without the label still gets `~/odin-perception` mounted from the host, as before.
 - **Selection:** `start_yolo_gpu_agx.sh` and `start_perception_agx.sh` use the container when the image exists (created on first use) and the host otherwise.
   Force one with `GPU_MODE=container` or `GPU_MODE=host`. A copy of a service left on the host is stopped first (it would hold the port).
-- **Stop:** `stop_yolo_gpu_agx.sh` stops the YOLO service (the container stays); `stop_odin_agx.sh all` removes the container.
+- **Stop:** `stop_yolo_gpu_agx.sh` stops the detector service (the container stays); `stop_odin_agx.sh all` removes the container.
 - **TensorRT engine:** it only loads with the TensorRT version that built it. On the Go2 the image has TensorRT 10.3.0, the same as the host
   (JetPack 6.2), and it loaded the engine built on the host; with another version, rebuild the engine (§ Jetson AGX Orin, step 8).
 - **Tested on the Go2** (26 Nov 2026): PyTorch sees the GPU inside the container, `test_stack.sh verify` expects the three containers and
@@ -394,9 +472,11 @@ computer and the AGX, with the same values. The scripts stop with a message whil
 | Variable | Default | Meaning |
 |---|---|---|
 | `ODIN_USER` | user with UID 1000 | AGX user that owns `~/odin_test` (watchdog / autostart run as root) |
-| `YOLO_WEIGHTS` | see `yolo_gpu_service.py` | YOLOv5 weights file |
-| `YOLO_BACKEND` | `tensorrt` | `pytorch` forces the PyTorch service |
-| `YOLO_TRT_ENGINE` | `~/odin_test/yolo_trt/yolov5l_fp16.engine` | TensorRT engine file |
+| `DETECTOR`, `TRACKER`, `DETECTOR_WEIGHTS`, `DETECTOR_CONF` | `yolov5`, `none`, see §5.1, `0.25` | GPU detector selection; normally in `~/.config/go2_agx/detector.env` |
+| `YOLO_WEIGHTS` | `~/odin_test/yolo/ros_ws/src/yolo_ros/scripts/models/yolov5l.pt` | YOLOv5 PyTorch weights (detector `yolov5`, when `DETECTOR_WEIGHTS` is empty) |
+| `YOLO_BACKEND` | `tensorrt` | `pytorch` skips the YOLOv5 TensorRT engine |
+| `YOLO_TRT_ENGINE` | `~/odin_test/yolo_trt/yolov5l_fp16.engine` | YOLOv5 TensorRT engine file |
+| `ODIN_MODELS` | `~/odin_test/models` | RF-DETR engines, Re-ID engine, SAM 2 checkpoints (`detector/get_models.sh`) |
 | `FLORENCE_CHECKLIST` | `~/perception_test/checklist.yaml` | List used by the Florence command `all` |
 | `ONS2_MAP_PCD` | `~/ons2/ros_ws/src/map_planner/maps/map.pcd` | Point cloud shown by `cloud_view.py` |
 | `GO2_LOG_DIR` | `~/ons2/logs` | Logs, including the follow log |
@@ -405,8 +485,8 @@ computer and the AGX, with the same values. The scripts stop with a message whil
 
 ## 9. Not included in this repository
 
-- **Model weights** (YOLOv5, Florence-2): download them from their official sources. The ONNX file and the TensorRT
-  engine are generated on the AGX (§6) and are specific to its TensorRT version.
+- **Model weights** (YOLOv5, RF-DETR, OSNet, SAM 2, Florence-2): downloaded from their official sources by the scripts.
+  The ONNX files and TensorRT engines are generated on the robot (§6, §5.1) and are specific to its TensorRT version.
 - **Maps and missions** (point clouds, occupancy grids, relocalization maps, waypoint files): they are specific to
   each site; create your own with the upstream map tutorial.
 - **Logs** generated at run time.
@@ -433,14 +513,17 @@ Built on [Odin Navigation Stack 2](https://github.com/ManifoldTechLtd/Odin-Nav-S
 - The additions in this branch are distributed under the **GNU GPL v3.0**, like ONS2 (see `LICENSE`).
 - Files copied from Apache-2.0 sources keep their original copyright and license header (or, where the original
   has none, a note of where they come from) and say what was modified: `ros_ws/src/yolo_ros/scripts/yolo_detector.py`, `ros_ws/src/yolo_ros/launch/yolo_query_only.launch`,
-  `robots/go2_agx/neupan/*.yaml`, `go2_agx/agx/yolo_gpu/yolo_detector_gpu.py`, `go2_agx/agx/control_command_agx.yaml`
+  `robots/go2_agx/neupan/*.yaml`, `go2_agx/agx/control_command_agx.yaml`
   and `go2_agx/agx/odin_depth.launch`.
 
 Third-party components, used but not included here (each keeps its own license):
 
 | Component | License | How it is used |
 |---|---|---|
-| [YOLOv5](https://github.com/ultralytics/yolov5) | AGPL-3.0 | upstream submodule; loaded by the YOLO GPU service |
+| [YOLOv5](https://github.com/ultralytics/yolov5) | AGPL-3.0 | upstream submodule; YOLOv5l weights and (for `.pt`) its code, loaded by the detector service |
+| [RF-DETR](https://github.com/roboflow/rf-detr) | Apache-2.0 | optional detector; weights exported by `detector/get_models.sh` |
+| [BoxMOT](https://github.com/mikel-brostrom/boxmot) (BoT-SORT, OSNet) | AGPL-3.0 | optional trackers, only in an image built with `WITH_TRACKERS=1` |
+| [SAM 2](https://github.com/facebookresearch/sam2) | Apache-2.0 | optional tracker, only in an image built with `WITH_TRACKERS=1`; checkpoint downloaded separately |
 | [NeuPAN](https://github.com/hanruihua/NeuPAN) | GPL-3.0 | part of ONS2 |
 | [odin_ros_driver](https://github.com/manifoldsdk/odin_ros_driver) | Apache-2.0 | upstream submodule; built in `Dockerfile.driver` |
 | [Odin-perception](https://github.com/ManifoldTechLtd/Odin-perception) | Apache-2.0 (see its `NOTICE`) | installed separately; `patches/` holds a small fix for it |

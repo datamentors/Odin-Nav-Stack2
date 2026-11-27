@@ -5,7 +5,7 @@
 #   2. start_odin_agx.sh go2       creates the single container odin-agx; Odin1 driver + relocalization (joins the
 #                                  ROS master on the Go2)
 #   3. start_depth_agx.sh          depth image for the ONS2 yolo_ros
-#   3b. start_yolo_gpu_agx.sh      YOLOv5l detector on the AGX GPU (Go2: ons2_start.sh --with-yolo-agx)
+#   3b. start_yolo_gpu_agx.sh      GPU detector (~/.config/go2_agx/detector.env; Go2: ons2_start.sh --with-yolo-agx)
 #   4. start_perception_agx.sh     Florence-2 (numbered detection) + frame server + Foxglove relay
 # Then the odin-watchdog service keeps the driver alive. Log: ~/odin_test/logs/autostart.log
 # Turn off: sudo systemctl disable odin-autostart        Run again by hand: sudo systemctl restart odin-autostart
@@ -40,7 +40,7 @@ start_companion() {   # $1 script  $2 label
 }
 start_companion start_depth_agx.sh "depth"
 if [ -x $H/odin-perception/.venv/bin/python ]; then   # GPU environment (CUDA venv): only there
-  start_companion start_yolo_gpu_agx.sh "YOLO GPU (YOLOv5l)"
+  start_companion start_yolo_gpu_agx.sh "GPU detector"
   start_companion start_perception_agx.sh "Florence-2"
 else
   log "no GPU environment (~/odin-perception/.venv): YOLO GPU and Florence-2 not started (use ons2_start.sh --with-yolo)"

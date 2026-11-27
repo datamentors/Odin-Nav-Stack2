@@ -7,39 +7,43 @@
 #       distance from the LIDAR (depth image /odin1/depth_img_competetion at the photo's time, 20th percentile inside
 #       the box = same method as our YOLO detector) and its 3D point in the camera frame (pinhole, this Odin1's
 #       calib.yaml). yolo_cmd_bridge.py on the Go2 puts them on the map as F1, F2 ... -> "list", "go F1".
+#   Tracking (typed in the same panel, handled here): "track 2" makes object #2 of the last search the target of the GPU
+#     detector's tracker (/perception/target/select: its box + the photo's time stamp, so the tracker finds it in the
+#     frame of that moment); "untrack" clears it. Needs a tracker (TRACKER in detector.env); any class works with sam2.
 #   Sending to YOLO (typed in the same Florence-2 panel, handled here, not by Florence-2):
 #     send on    automatic (default): every search is sent to YOLO as F1, F2 ...
 #     send off   manual: searches are NOT sent; then "send 2" (only chair 2), "send 2 3", "send all"
 #     clean      removes all F objects from YOLO and the purple markers
-import bisect, collections, json, math, re, threading, urllib.parse, urllib.request
-import numpy as np
+import collections, json, math, threading, urllib.parse, urllib.request
 import rospy
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
+import depth3d   # copied next to this file (/depth3d.py) by start_perception_agx.sh
+
 SERVICE = "http://127.0.0.1:8740"
-NOT_A_SEARCH = ("describe", "desc", "show", "list", "last", "check", "help", "all")
+NOT_A_SEARCH = ("describe", "desc", "show", "list", "last", "check", "help", "all", "track", "untrack")
 
 rospy.init_node("florence_cmd_relay")
 pub = rospy.Publisher("/florence/result", String, queue_size=1, latch=True)
 obj_pub = rospy.Publisher("/florence/objects_3d", String, queue_size=1, latch=True)
+sel_pub = rospy.Publisher("/perception/target/select", String, queue_size=1)
 pub.publish(String(data="Ready. Send an English word to /florence/command (chair, table, person, fire extinguisher ...): "
                         "every object found gets a name and number (chair 1, chair 2 ...) on /inspection/annotated/compressed "
                         "and is sent to YOLO as F1, F2 ... ('list', 'go F1'); 'send off' = choose what to send, 'clean' = remove. "
-                        "Then: far <word> (looks farther, ~12 s) | describe N | show | check <word> | all."))
+                        "Then: far <word> (looks farther, ~12 s) | describe N | show | check <word> | all | track N (detector tracker) | untrack."))
 busy = threading.Lock()
 bridge = CvBridge()
-state = {"auto": True, "last": None, "sent": {}}   # last = 3D result of the last search (sent or not)
+state = {"auto": True, "last": None, "sent": {}, "boxes": {}, "stamp": 0.0}
+# last = 3D result of the last search (sent or not); boxes = every object of it {n: (name, box)}, stamp = the photo's time
 depth_buf = collections.deque(maxlen=25)          # (stamp_sec, msg): ~4 s of lidar depth images
 yolo_names = set()
 
-K = None
 try:
-    txt = open("/calib.yaml").read()
-    g = lambda k: float(re.search(r"^\s*%s:\s*([-+0-9.eE]+)" % k, txt, re.M).group(1))
-    K = {"fx": g("A11"), "fy": g("A22"), "cx": g("u0"), "cy": g("v0"), "skew": g("A12")}
+    K = depth3d.load_intrinsics("/calib.yaml")
 except Exception as e:
+    K = None
     rospy.logwarn("florence relay: /calib.yaml not read (%s): no 3D positions" % e)
 
 rospy.Subscriber("/odin1/depth_img_competetion", Image,
@@ -59,28 +63,12 @@ def depth_at(stamp, snap=()):
         st, m = items[-1]
     else:
         st, m = min(items, key=lambda it: abs(it[0] - stamp))
-    d = bridge.imgmsg_to_cv2(m, desired_encoding="passthrough").astype(np.float32)
-    if m.encoding in ("16UC1", "mono16"):
-        d = d / 1000.0
-    return d, st
+    return depth3d.depth_to_m(bridge.imgmsg_to_cv2(m, desired_encoding="passthrough"), m.encoding), st
 
 
 def object_3d(depth, o):
-    """Same as our YOLO detector: 20th percentile of the lidar depth in the box shrunk 10 %, pinhole unprojection."""
-    h, w = depth.shape[:2]
-    x0, y0, x1, y1 = o["x0"], o["y0"], o["x1"], o["y1"]
-    bw, bh = x1 - x0, y1 - y0
-    xa, xb = int(np.clip(x0 + 0.1 * bw, 0, w - 1)), int(np.clip(x1 - 0.1 * bw, 1, w))
-    ya, yb = int(np.clip(y0 + 0.1 * bh, 0, h - 1)), int(np.clip(y1 - 0.1 * bh, 1, h))
-    v = depth[ya:yb, xa:xb]
-    v = v[np.isfinite(v) & (v > 0.15) & (v < 40.0)]
-    if v.size < (20 if bw * bh > 4000 else 5):     # far/small boxes (far search) have few lidar points
-        return None
-    z = float(np.percentile(v, 20))
-    u, vv = (x0 + x1) / 2.0, (y0 + y1) / 2.0
-    my = (vv - K["cy"]) / K["fy"]
-    mx = (u - K["cx"] - K["skew"] * my) / K["fx"]
-    return mx * z, my * z, z
+    """Same as the GPU detector (depth3d.py): 20th percentile of the lidar depth in the box shrunk 10 %, pinhole unprojection."""
+    return depth3d.box_to_3d(K, depth, (o["x0"], o["y0"], o["x1"], o["y1"]))
 
 
 def publish_3d(snap=()):
@@ -96,6 +84,8 @@ def publish_3d(snap=()):
         return "\n(3D: depth %dx%d does not match the photo %sx%s)" % (depth.shape[1], depth.shape[0],
                                                                       last.get("width"), last.get("height"))
     out, lines = [], []
+    state["boxes"] = {o["n"]: (o["name"], [o["x0"], o["y0"], o["x1"], o["y1"]]) for o in last.get("objects", [])}
+    state["stamp"] = stamp
     for o in last.get("objects", []):
         p = object_3d(depth, o)
         if p is None:
@@ -104,7 +94,7 @@ def publish_3d(snap=()):
         x, y, z = p
         dist = math.hypot(x, z)
         out.append({"n": o["n"], "name": o["name"], "label": o["label"], "x": x, "y": y, "z": z, "dist": dist,
-                    "direction": o.get("direction", "")})
+                    "direction": o.get("direction", ""), "box": [o["x0"], o["y0"], o["x1"], o["y1"]]})
         lines.append("  #%d %-16s %5.2f m  %s" % (o["n"], o["name"], dist, o.get("direction", "")))
     msg = {"phrase": last.get("phrase"), "seq": last.get("seq"), "stamp": stamp if stamp > 0 else dst,
            "frame": "camera_link", "objects": out}
@@ -165,8 +155,28 @@ def send_cmd(q):
         ", ".join("F%d %s" % (n, objs[n]["name"]) for n in chosen), last["phrase"], chosen[0])
 
 
+def track_cmd(q):
+    """track N | untrack -> /perception/target/select for the GPU detector's tracker (answer on /perception/target/status)."""
+    parts = q.strip().lower().split()
+    if parts[0] == "untrack":
+        sel_pub.publish(String(data=json.dumps({"clear": True})))
+        return "Tracking target cleared."
+    try:
+        n = int(parts[1].lstrip("#f"))
+    except (IndexError, ValueError):
+        return "Use: track N (an object number of the last search) | untrack"
+    if n not in state["boxes"]:
+        return "No #%d in the last search (search first, e.g. 'person')." % n
+    name, box = state["boxes"][n]
+    sel_pub.publish(String(data=json.dumps({"box": box, "stamp": state["stamp"], "name": (state["last"] or {}).get("phrase") or name})))
+    return "Asked the detector to track #%d %s (answer on /perception/target/status and /yolo/console)." % (n, name)
+
+
 def work(q):
     low = q.strip().lower()
+    if low.split()[:1] in (["track"], ["untrack"]):
+        pub.publish(String(data="> %s\n%s" % (q, track_cmd(q))))
+        return
     if low == "clean" or low.split()[:1] == ["send"]:
         pub.publish(String(data="> %s\n%s" % (q, send_cmd(q))))
         return

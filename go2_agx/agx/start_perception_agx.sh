@@ -23,6 +23,7 @@ else
   setsid nohup $HOME/odin-perception/.venv/bin/python $HOME/odin_test/florence_service.py > $FLOG 2>&1 < /dev/null &
 fi
 agx_cp $D/florence_cmd_relay.py /relay.py
+agx_cp $D/detector/depth3d.py /depth3d.py   # box -> 3D point, shared with the GPU detector
 agx_start relay "python3 /relay.py"
 for i in $(seq 1 30); do sleep 2; grep -q "listening on" $FLOG && { echo "OK: Florence-2 loaded; Foxglove can use /florence/command -> /florence/result$(gpu_in_container && echo "  [container $GPU_CTR]")"; exit 0; }; done
 echo "Florence-2 service not ready: tail $FLOG"; exit 1

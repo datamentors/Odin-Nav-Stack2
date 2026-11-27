@@ -66,7 +66,8 @@ fi
 rsync -a --backup --suffix=".bak_$ts" --include 'ons2_*.sh' --include remote_monitor_start.sh --include Dockerfile --exclude '*' "$REPO/go2_agx/go2/" ~/ons2_docker/ && echo "  ~/ons2_docker/"
 rsync -a --backup --suffix=".bak_$ts" --include start_odin_remote.sh --include stop_odin_remote.sh --include start_bridge.sh --include stop_bridge.sh \
   --include fastdds_udp.xml --exclude '*' "$REPO/go2_agx/go2/" ~/odin_nav_stack/drv0144/ && echo "  ~/odin_nav_stack/drv0144/"
-chmod +x ~/odin_test/*.sh ~/odin_test/yolo_trt/*.sh ~/ons2_docker/*.sh ~/odin_nav_stack/drv0144/*.sh 2>/dev/null
+[ -f ~/.config/go2_agx/detector.env ] || { cp "$REPO/go2_agx/detector.env.example" ~/.config/go2_agx/detector.env && echo "  created ~/.config/go2_agx/detector.env (YOLOv5l, no tracker)"; }
+chmod +x ~/odin_test/*.sh ~/odin_test/detector/*.sh ~/odin_test/detector/*.py ~/odin_test/yolo_trt/*.sh ~/ons2_docker/*.sh ~/odin_nav_stack/drv0144/*.sh 2>/dev/null
 
 echo "== YOLO weights"
 ~/odin_test/yolo_trt/get_weights.sh || echo "  yolov5l weights failed (retry: ~/odin_test/yolo_trt/get_weights.sh)"
@@ -92,4 +93,5 @@ echo; echo "== done. Still to do by hand:"
 [ -f ~/odin_nav_stack/docker/maps/relocalization/"${RELOC_MAP:-restaurante_prueba.bin}" ] || echo "  - copy the map to ~/odin_nav_stack/docker/maps/relocalization/${RELOC_MAP:-restaurante_prueba.bin}"
 [ -f ~/odin_test/yolo_trt/yolov5l_fp16.engine ] || echo "  - TensorRT engine (optional, faster YOLO): ./go2_agx/install.sh --engine   (or ~/odin_test/yolo_trt/build_engine.sh)"
 [ -f ~/ons2/ros_ws/devel/setup.bash ] || echo "  - ONS2 workspace: ./go2_agx/install.sh --ons2"
+ls ~/odin_test/models/rfdetr_*_fp16.engine >/dev/null 2>&1 || echo "  - optional RF-DETR detector: ~/odin_test/detector/get_models.sh rfdetr   (then DETECTOR=rfdetr in ~/.config/go2_agx/detector.env)"
 echo "  - then start: see go2_agx/README.md, or GO2_SSH=local ./go2_agx/test_stack.sh all"

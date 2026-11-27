@@ -3,6 +3,7 @@
 #   ./go2_agx/build_images.sh            build everything missing
 #   ./go2_agx/build_images.sh --force    rebuild everything
 #   BASE_TAG=odin-nav:drv0144-rebuilt ./go2_agx/build_images.sh   test build under another tag (does not touch the working base)
+#   WITH_TRACKERS=1 ./go2_agx/build_images.sh   odin-gpu also gets the BoT-SORT and SAM 2 trackers (detector service)
 # Needs about 40 GB of free disk, internet access, and the submodules (initialised here).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -34,6 +35,7 @@ step "4/5 odin-yolo:0144  (the image of the container odin-agx)"
 have odin-yolo:0144 && echo "exists, skipped" || docker build -f go2_agx/agx/docker/Dockerfile.yolo --build-arg DRV_IMAGE=odin-drv:0144 -t odin-yolo:0144 .
 
 step "5/5 odin-gpu:go2  (CUDA/TensorRT + Odin-perception venv + Florence-2 model, all inside)"
-have odin-gpu:go2 && echo "exists, skipped" || docker build -f go2_agx/agx/docker/Dockerfile.gpu -t odin-gpu:go2 .
+have odin-gpu:go2 && echo "exists, skipped" || \
+  docker build -f go2_agx/agx/docker/Dockerfile.gpu --build-arg WITH_TRACKERS="${WITH_TRACKERS:-0}" -t odin-gpu:go2 .
 
 echo; docker images --format '{{.Repository}}:{{.Tag}}  {{.Size}}' | grep -E "^(odin-nav:drv0144|ons2:go2|odin-drv:0144|odin-yolo:0144|odin-gpu:go2)"
