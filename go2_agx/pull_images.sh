@@ -1,10 +1,12 @@
 #!/bin/bash
 # Pull the three images that run the stack from AWS ECR and give them the local names the scripts use. Run it ON the new Go2.
-#   <REGISTRY>/<PREFIX>/odin_ons2:<VERSION> -> ons2:go2      .../odin_yolo -> odin-yolo:0144      .../odin_gpu -> odin-gpu:go2
+#   odin_ons2 -> ons2:go2      odin_yolo -> odin-yolo:0144      odin_gpu -> odin-gpu:go2   (repository layout: see the settings below)
 # After it, ./go2_agx/install.sh --ons2 --engine builds the workspace and the engine; build_images.sh is not needed.
 #   REGISTRY=<account>.dkr.ecr.<region>.amazonaws.com VERSION=1.0.0 ./go2_agx/pull_images.sh          pull what is missing
 #   REGISTRY=... VERSION=1.0.0 ./go2_agx/pull_images.sh --force                                       replace images that exist (they are untagged, not deleted)
-# Settings (environment): REGISTRY (required), VERSION (required), PREFIX (default robotics), AWS_REGION (default: from the registry name)
+# Settings (environment): REGISTRY (required), VERSION (required), AWS_REGION (default: from the registry name), and ONE of:
+#   - nothing: three repositories <PREFIX>/odin_ons2, odin_yolo, odin_gpu (PREFIX default robotics), tag = VERSION
+#   - REPO=<name>: all three in ONE existing repository, tags ons2-<VERSION>, yolo-<VERSION>, gpu-<VERSION>
 # Needs: docker, the aws CLI, and an AWS login that may pull from ECR (set up by you). The login password is never stored.
 set -euo pipefail
 FORCE=0
@@ -17,8 +19,13 @@ AWS_REGION="${AWS_REGION:-$(sed -n 's/.*\.ecr\.\([a-z0-9-]*\)\.amazonaws\.com.*/
 [ -n "$AWS_REGION" ] || { echo "cannot read the region from REGISTRY: set AWS_REGION"; exit 1; }
 [ "$(uname -m)" = aarch64 ] || { echo "this machine is $(uname -m), the images are arm64 (Jetson): run this on the Go2"; exit 1; }
 
-IMAGES=("ons2:go2:odin_ons2" "odin-yolo:0144:odin_yolo" "odin-gpu:go2:odin_gpu")
-split() { local e=$1; LOCAL="${e%:*}"; REPO="${e##*:}"; REMOTE="$REGISTRY/$PREFIX/$REPO:$VERSION"; }
+# local image | repository name (three-repository mode) | tag prefix (single-repository mode)
+IMAGES=("ons2:go2|odin_ons2|ons2" "odin-yolo:0144|odin_yolo|yolo" "odin-gpu:go2|odin_gpu|gpu")
+split() {   # sets LOCAL, ECR_REPO, TAG, REMOTE
+  local name short; IFS='|' read -r LOCAL name short <<< "$1"
+  if [ -n "${REPO:-}" ]; then ECR_REPO="$REPO"; TAG="$short-$VERSION"; else ECR_REPO="$PREFIX/$name"; TAG="$VERSION"; fi
+  REMOTE="$REGISTRY/$ECR_REPO:$TAG"
+}
 
 todo=()
 for e in "${IMAGES[@]}"; do

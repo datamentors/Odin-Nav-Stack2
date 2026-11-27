@@ -1,11 +1,13 @@
 #!/bin/bash
 # Publish the three images that run the stack to AWS ECR. Run it ON the machine that has the images (the Go2).
-#   ons2:go2 -> <REGISTRY>/<PREFIX>/odin_ons2:<VERSION>      odin-yolo:0144 -> .../odin_yolo:<VERSION>      odin-gpu:go2 -> .../odin_gpu:<VERSION>
+#   ons2:go2, odin-yolo:0144 and odin-gpu:go2 (repository layout: see the settings below)
 # It is a DRY RUN until you add --push: it only checks the images and prints what it would do.
 #   REGISTRY=<account>.dkr.ecr.<region>.amazonaws.com VERSION=1.0.0 ./go2_agx/push_images.sh            dry run
 #   REGISTRY=... VERSION=1.0.0 ./go2_agx/push_images.sh --push                                          log in to ECR and push
 #   REGISTRY=... VERSION=1.0.0 ./go2_agx/push_images.sh --push --create-repos                           also create the missing repositories
-# Settings (environment): REGISTRY (required), VERSION (required, never "latest"), PREFIX (default robotics), AWS_REGION (default: from the registry name)
+# Settings (environment): REGISTRY (required), VERSION (required, never "latest"), AWS_REGION (default: from the registry name), and ONE of:
+#   - nothing: three repositories <PREFIX>/odin_ons2, odin_yolo, odin_gpu (PREFIX default robotics), tag = VERSION
+#   - REPO=<name>: all three in ONE existing repository, tags ons2-<VERSION>, yolo-<VERSION>, gpu-<VERSION>
 # Needs: docker, the aws CLI, and an AWS login that may push to ECR (SSO or keys, set up by you; nothing is read from or written to a file here).
 # The ECR login password is piped straight into docker login and never stored.
 set -euo pipefail
@@ -20,8 +22,13 @@ AWS_REGION="${AWS_REGION:-$(sed -n 's/.*\.ecr\.\([a-z0-9-]*\)\.amazonaws\.com.*/
 [ -n "$AWS_REGION" ] || { echo "cannot read the region from REGISTRY: set AWS_REGION"; exit 1; }
 
 # local image : repository name
-IMAGES=("ons2:go2:odin_ons2" "odin-yolo:0144:odin_yolo" "odin-gpu:go2:odin_gpu")
-split() { local e=$1; LOCAL="${e%:*}"; REPO="${e##*:}"; REMOTE="$REGISTRY/$PREFIX/$REPO:$VERSION"; }
+# local image | repository name (three-repository mode) | tag prefix (single-repository mode)
+IMAGES=("ons2:go2|odin_ons2|ons2" "odin-yolo:0144|odin_yolo|yolo" "odin-gpu:go2|odin_gpu|gpu")
+split() {   # sets LOCAL, ECR_REPO, TAG, REMOTE
+  local name short; IFS='|' read -r LOCAL name short <<< "$1"
+  if [ -n "${REPO:-}" ]; then ECR_REPO="$REPO"; TAG="$short-$VERSION"; else ECR_REPO="$PREFIX/$name"; TAG="$VERSION"; fi
+  REMOTE="$REGISTRY/$ECR_REPO:$TAG"
+}
 
 echo "== images on this machine"
 FAIL=0
@@ -40,7 +47,7 @@ done
 if [ $PUSH = 0 ]; then
   echo
   echo "DRY RUN: nothing was pushed. To push: add --push (and --create-repos if the repositories do not exist yet)."
-  echo "Repositories needed in $AWS_REGION: $(for e in "${IMAGES[@]}"; do split "$e"; printf '%s/%s  ' "$PREFIX" "$REPO"; done)"
+  echo "Repositories needed in $AWS_REGION: $(for e in "${IMAGES[@]}"; do split "$e"; echo "$ECR_REPO"; done | sort -u | tr '\n' ' ')"
   echo "Recommended repository settings: private, tag immutability ON, scan on push ON."
   exit 0
 fi
@@ -51,16 +58,17 @@ echo "== AWS login OK: $(aws sts get-caller-identity --query Arn --output text -
 
 for e in "${IMAGES[@]}"; do
   split "$e"
-  if ! aws ecr describe-repositories --repository-names "$PREFIX/$REPO" --region "$AWS_REGION" >/dev/null 2>&1; then
+  if ! aws ecr describe-repositories --repository-names "$ECR_REPO" --region "$AWS_REGION" >/dev/null 2>&1; then
     if [ $CREATE = 1 ]; then
-      aws ecr create-repository --repository-name "$PREFIX/$REPO" --region "$AWS_REGION" --image-tag-mutability IMMUTABLE \
-        --image-scanning-configuration scanOnPush=true >/dev/null && echo "  created repository $PREFIX/$REPO (immutable tags, scan on push)"
+      aws ecr create-repository --repository-name "$ECR_REPO" --region "$AWS_REGION" --image-tag-mutability IMMUTABLE \
+        --image-scanning-configuration scanOnPush=true >/dev/null && echo "  created repository $ECR_REPO (immutable tags, scan on push)"
     else
-      echo "repository $PREFIX/$REPO does not exist in $AWS_REGION: create it in the console, or add --create-repos"; exit 1
+      echo "repository $ECR_REPO does not exist in $AWS_REGION: create it in the console, or add --create-repos"; exit 1
     fi
   fi
-  if aws ecr describe-images --repository-name "$PREFIX/$REPO" --image-ids imageTag="$VERSION" --region "$AWS_REGION" >/dev/null 2>&1; then
-    echo "$PREFIX/$REPO:$VERSION already exists in ECR (tags are meant to be final): use a new VERSION"; exit 1
+  # a published tag is final, also in a repository that allows overwriting
+  if aws ecr describe-images --repository-name "$ECR_REPO" --image-ids imageTag="$TAG" --region "$AWS_REGION" >/dev/null 2>&1; then
+    echo "$ECR_REPO:$TAG already exists in ECR (tags are meant to be final): use a new VERSION"; exit 1
   fi
 done
 

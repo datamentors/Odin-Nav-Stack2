@@ -218,9 +218,9 @@ but **not tested yet**. The manual steps below are what it does.
 
 **Publishing the images to AWS ECR, and using them on another Go2** (`push_images.sh`, `pull_images.sh`)
 
-The three images that run the stack (`ons2:go2`, `odin-yolo:0144`, `odin-gpu:go2`) are `arm64` and go to one private repository each, `<PREFIX>/odin_ons2`, `odin_yolo` and `odin_gpu` (default prefix `robotics`), with a version tag. They are large (24, 6 and 19 GB on disk, the upload is tens of GB), so run the push on the Go2 itself.
+The three images that run the stack (`ons2:go2`, `odin-yolo:0144`, `odin-gpu:go2`) are `arm64`. A repository may hold several images, so there are two layouts: **one private repository each** (default: `<PREFIX>/odin_ons2`, `odin_yolo`, `odin_gpu`, prefix `robotics`, tag = the version), or **all three in one existing repository** with `REPO=<name>` (tags `ons2-<VERSION>`, `yolo-<VERSION>`, `gpu-<VERSION>`). They are large (24, 6 and 19 GB on disk, the upload is tens of GB), so run the push on the Go2 itself.
 
-1. Create the three repositories once (private, **tag immutability on**, scan on push on), in the console or with `--create-repos`.
+1. Create the repository (or the three) once, private, ideally with **tag immutability on** and scan on push on, in the console or with `--create-repos` (which creates them that way). In a repository that allows overwriting tags, the script still refuses to push a tag that already exists.
 2. Log in to AWS yourself (`aws sso login`, or export keys in the shell; nothing is read from or written to a file by the scripts).
 3. On the machine with the images:
    ```
