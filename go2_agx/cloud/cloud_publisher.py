@@ -132,9 +132,8 @@ class CloudPublisher:
             "progress_percent": round(min(100.0, max(0.0, m.progress_percent)), 1),
             "linear_vel": round(m.linear_vel, 3),
             "angular_vel": round(m.angular_vel, 3),
-            "event": m.event,
         }
-        sig = (m.state, m.mission_id, m.current_waypoint_idx, m.event)
+        sig = (m.state, m.mission_id, m.current_waypoint_idx)
         if sig != self.nav_sig:
             self.nav_sig = sig
             self.last["nav"] = time.time()

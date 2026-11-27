@@ -76,6 +76,17 @@ def stamped_tf(yaw, x, y):
     return NS(header=NS(stamp=FakeTime(12345.0)), transform=NS(rotation=q(yaw), translation=NS(x=x, y=y, z=0.0)))
 
 
+def mission_status(**kw):
+    """A fake MissionStatus with exactly the fields of nav_interfaces/msg/MissionStatus.msg."""
+    text = (ROOT.parent.parent / "ros_ws/src/nav_interfaces/msg/MissionStatus.msg").read_text()
+    fields = [l.split()[1] for l in text.splitlines() if l.strip() and not l.startswith("#")]
+    unknown = set(kw) - set(fields)
+    assert not unknown, "not in MissionStatus.msg: %s" % unknown
+    base = {f: 0 for f in fields}
+    base.update(kw)
+    return NS(**base)
+
+
 def det(cid, score, x, z):
     return NS(results=[NS(id=cid, score=score)], bbox=NS(center=NS(position=NS(x=x, y=0.0, z=z))),
               header=NS(frame_id="camera_link"))
@@ -100,12 +111,11 @@ def main():
     n.on_map(NS(data=(-1, 0, 100, 0) * 4, info=NS(resolution=0.05, width=4, height=4,
                                                   origin=NS(position=NS(x=-1.0, y=-2.0), orientation=q(0.0)))))
     # nav
-    n.on_nav(NS(state="NAVIGATING", mission_id="m1", current_waypoint_idx=0, total_waypoints=1,
-                current_target=NS(position=NS(x=5.1, y=0.4)), distance_to_target_m=1.9, progress_percent=38.0,
-                linear_vel=0.1, angular_vel=0.0, event=""))
-    n.on_nav(NS(state="IDLE", mission_id="", current_waypoint_idx=0, total_waypoints=0,
-                current_target=NS(position=NS(x=0.0, y=0.0)), distance_to_target_m=-1.0, progress_percent=140.0,
-                linear_vel=0.0, angular_vel=0.0, event=""))
+    n.on_nav(mission_status(state="NAVIGATING", mission_id="m1", current_waypoint_idx=0, total_waypoints=1,
+                            current_target=NS(position=NS(x=5.1, y=0.4)), distance_to_target_m=1.9,
+                            progress_percent=38.0, linear_vel=0.1, angular_vel=0.0))
+    n.on_nav(mission_status(state="IDLE", mission_id="", current_target=NS(position=NS(x=0.0, y=0.0)),
+                            distance_to_target_m=-1.0, progress_percent=140.0))
     # yolo: names, one frame, same frame again (no new message), a changed list, then silence
     n.on_names(NS(data=json.dumps({"0": "person", "56": "chair"})))
     frame = NS(header=NS(stamp=FakeTime(99.5)), detections=[det(56, 0.87, 0.5, 2.4), det(0, 0.7, -1.0, 3.0)])

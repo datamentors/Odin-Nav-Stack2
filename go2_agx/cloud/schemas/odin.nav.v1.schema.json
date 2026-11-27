@@ -25,7 +25,6 @@
     "distance_to_target_m": {"type": "number", "minimum": 0},
     "progress_percent": {"type": "number", "minimum": 0, "maximum": 100},
     "linear_vel": {"type": "number"},
-    "angular_vel": {"type": "number"},
-    "event": {"type": "string"}
+    "angular_vel": {"type": "number"}
   }
 }
