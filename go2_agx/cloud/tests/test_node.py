@@ -38,6 +38,7 @@ class FakePub:
 
 
 TF = {}
+PARAMS = {}
 
 
 class FakeBuffer:
@@ -56,7 +57,7 @@ def mod(name, **attrs):
 
 mod("rospy", Publisher=FakePub, Subscriber=lambda *a, **k: None, Time=FakeTime, Duration=lambda s: s,
     Rate=lambda hz: NS(sleep=lambda: None), is_shutdown=lambda: False, logwarn=print, logwarn_throttle=lambda *a: None,
-    init_node=lambda n: None, get_param=lambda n: None)
+    init_node=lambda n: None, get_param=lambda n, d=None: PARAMS.get(n, d))
 mod("tf2_ros", Buffer=FakeBuffer, TransformListener=lambda b: None)
 mod("nav_msgs"), mod("nav_msgs.msg", OccupancyGrid=object, Odometry=object)
 mod("std_msgs"), mod("std_msgs.msg", String=lambda data="": NS(data=data))
@@ -94,7 +95,7 @@ def det(cid, score, x, z):
 
 def main():
     cfg = yaml.safe_load((ROOT / "config" / "cloud_publisher.yaml").read_text())
-    cfg["map_name"] = "restaurant_walls"
+    PARAMS[cfg["map_name_param"]] = "restaurant_walls"
     n = cloud_publisher.CloudPublisher(cfg)
     n.t0 -= 10  # past the Florence start filter
 
@@ -120,9 +121,11 @@ def main():
     n.on_names(NS(data=json.dumps({"0": "person", "56": "chair"})))
     frame = NS(header=NS(stamp=FakeTime(99.5)), detections=[det(56, 0.87, 0.5, 2.4), det(0, 0.7, -1.0, 3.0)])
     n.on_yolo(frame)
-    n.last["yolo"] = 0
+    n.last["yolo"] = time.time() - 1
     n.on_yolo(frame)
-    n.last["yolo"] = 0
+    n.last["yolo"] = time.time() - 11  # an unchanged list is sent again after yolo_refresh_s
+    n.on_yolo(frame)
+    n.last["yolo"] = time.time() - 1
     n.on_yolo(NS(header=NS(stamp=FakeTime(99.6)), detections=[det(56, 0.9, 0.5, 1.0)]))
     n.last_seen["yolo"] -= 5
     # florence: a normal result, and one with missing optional fields
@@ -162,13 +165,14 @@ def main():
         ("pose with TF is relocalized", published[1][1].get("relocalized") is True),
         ("map sent once for two identical maps", count("odin.map.v1") == 1),
         ("nav sent for each state change", count("odin.nav.v1") == 2),
-        ("yolo: 1st, changed list, then empty", count("odin.detections.yolo.v1") == 3),
+        ("yolo: 1st, refresh, changed list, then empty", count("odin.detections.yolo.v1") == 4),
         ("yolo objects carry class names", any(o["class"] == "chair" for t, m in published
                                                if m["kind"] == "odin.detections.yolo.v1" for o in m["objects"])),
         ("yolo map position from TF", any(o.get("map_x") == 3.5 for t, m in published
                                           if m["kind"] == "odin.detections.yolo.v1" for o in m["objects"])),
         ("florence: two valid searches, bad json ignored", count("odin.detections.florence.v1") == 2),
         ("stack sent", count("odin.stack.v1") == 1),
+        ("map name from the ROS parameter", all(m.get("map") == "restaurant_walls" for t, m in published if m["kind"] in ("odin.pose.v1", "odin.map.v1"))),
         ("last yolo message is the empty list", [m for t, m in published if m["kind"] == "odin.detections.yolo.v1"][-1]["objects"] == []),
     ]
     for name, ok in checks:

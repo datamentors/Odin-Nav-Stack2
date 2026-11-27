@@ -45,7 +45,7 @@ class CloudPublisher:
         self.yolo_sig = None
         self.map_msg = None
         self.nav_msg = None
-        self.map_name = cfg.get("map_name") or os.environ.get("ONS2_MAP", "unknown")
+        self.map_name = cfg.get("map_name") or os.environ.get("ONS2_MAP") or "unknown"
 
         self.tfbuf = tf2_ros.Buffer()
         self.tfl = tf2_ros.TransformListener(self.tfbuf)
@@ -76,6 +76,13 @@ class CloudPublisher:
         msg.update(body)
         self.pub[channel].publish(String(data=json.dumps(msg, separators=(",", ":"))))
 
+    def resolve_map_name(self):
+        """ONS2 keeps the map name in a ROS parameter; read it until we have it."""
+        if self.map_name == "unknown":
+            name = rospy.get_param(self.cfg.get("map_name_param", "/map_planner/map_file_name"), "")
+            if name:
+                self.map_name = str(name)
+
     def seen(self, name):
         self.last_seen[name] = time.time()
 
@@ -102,6 +109,7 @@ class CloudPublisher:
 
     def on_map(self, m):
         self.seen("map")
+        self.resolve_map_name()
         sha = hashlib.sha256(array.array('b', m.data).tobytes()).hexdigest()
         o = m.info.origin
         self.map_msg = {
@@ -169,7 +177,9 @@ class CloudPublisher:
             })
         sig = yolo_signature(objects)
         period = 1.0 / self.cfg["rates_hz"]["yolo_max"] if self.cfg["rates_hz"]["yolo_max"] > 0 else 0
-        if sig != self.yolo_sig and period and now - self.last["yolo"] >= period:
+        refresh = self.cfg["rates_hz"].get("yolo_refresh_s", 10.0)
+        changed = sig != self.yolo_sig and period and now - self.last["yolo"] >= period
+        if changed or (refresh > 0 and now - self.last["yolo"] >= refresh):
             self.yolo_sig = sig
             self.last["yolo"] = now
             self.send("telemetry", "odin.detections.yolo.v1",
@@ -197,6 +207,7 @@ class CloudPublisher:
     # ---- periodic
     def pose(self):
         c = self.cfg
+        self.resolve_map_name()
         body = {"map": self.map_name, "relocalized": False, "speed": round(self.speed, 3)}
         try:
             tr = self.tfbuf.lookup_transform(c["map_frame"], c["base_frame"], rospy.Time(0))

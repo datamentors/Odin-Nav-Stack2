@@ -1,12 +1,14 @@
 # cloud_publisher settings. Rates are per message kind (Hz); 0 turns a kind off.
-map_name: ""                  # filled from the ONS2 map name at start (env ONS2_MAP)
+map_name: ""                  # empty = read it from the ONS2 parameter below
+map_name_param: /map_planner/map_file_name   # where ONS2 keeps the map name
 base_frame: odin1_base_link
 map_frame: map
 camera_frame: camera_link     # same as yolo_detector.py; YOLO 3D points are treated as being in this frame
 tf_max_age_s: 1.0             # older than this = not relocalized
 rates_hz:
   pose: 2.0
-  yolo_max: 2.0               # upper limit; only sent when the list changes
+  yolo_max: 2.0               # upper limit; sent when the list changes
+  yolo_refresh_s: 10.0        # an unchanged list is sent again after this long (late viewers)
   map_refresh_s: 60.0         # period, not a rate
   nav_refresh_s: 10.0
   nav_active_refresh_s: 2.0   # while NAVIGATING (status arrives at 2 Hz)
