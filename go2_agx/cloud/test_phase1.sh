@@ -23,11 +23,13 @@ if running odin-pulse-cloud; then
   NODES=$(docker exec odin-pulse-cloud bash -c "source /opt/ros/humble/setup.bash; ros2 node list 2>/dev/null")
   if echo "$NODES" | grep -qiE "control_adapter|teleop"; then fail "a control or teleop node is running: $(echo "$NODES" | grep -iE 'control_adapter|teleop' | tr '\n' ' ')"
   else pass "no control_adapter or teleop node in ROS 2"; fi
-  for n in cloud_gateway communications_lifecycle_manager robot_status_collector; do
+  for n in cloud_gateway media_gateway communications_lifecycle_manager robot_status_collector; do
     echo "$NODES" | grep -qx "/$n" && pass "node /$n" || fail "node /$n missing"
   done
   state=$(docker exec odin-pulse-cloud bash -c "source /opt/ros/humble/setup.bash; ros2 lifecycle get /cloud_gateway 2>&1" | head -1)
   echo "$state" | grep -qi "active" && pass "cloud_gateway lifecycle: $state" || fail "cloud_gateway lifecycle: $state"
+  state=$(docker exec odin-pulse-cloud bash -c "source /opt/ros/humble/setup.bash; ros2 lifecycle get /media_gateway 2>&1" | head -1)
+  echo "$state" | grep -qi "active" && pass "media_gateway lifecycle: $state (stream odin_camera is disabled until AWS)" || fail "media_gateway lifecycle: $state"
 fi
 
 echo "== messages seen by the gateway (listening ${SECS} s)"

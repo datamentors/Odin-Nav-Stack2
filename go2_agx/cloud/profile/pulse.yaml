@@ -7,12 +7,14 @@
 # DDS: the ROS 1 -> ROS 2 bridge (odin-bridge) is FastRTPS on domain 42 with a UDP-only config, so this runtime uses the same.
 #
 # Phase 1: broker_type mock (no AWS). Phase 3: broker_type aws_iot with the certificates mounted from ARDIA_IOT_DIR.
-# Phase 2 adds the media_gateway (Odin camera over KVS) here.
+# Phase 2: media_gateway with the stream odin_camera (Odin1 camera over KVS WebRTC). The stream stays enabled: false until real
+# AWS access exists: media_gateway starts KVS signaling BEFORE the GStreamer pipeline, so an enabled stream cannot run without it.
 
 pulse_bringup:
   ros__parameters:
     runtime.pulse.actions:
       - cloud_gateway
+      - media_gateway
       - robot_status_collector
       - communications_lifecycle_manager
       - observability_lifecycle_manager
@@ -30,6 +32,13 @@ pulse_bringup:
     launch.cloud_gateway.name: cloud_gateway
     launch.cloud_gateway.respawn: true
     launch.cloud_gateway.respawn_delay: 2.0
+
+    launch.media_gateway.kind: lifecycle_node
+    launch.media_gateway.package: media_gateway
+    launch.media_gateway.executable: media_gateway
+    launch.media_gateway.name: media_gateway
+    launch.media_gateway.respawn: true
+    launch.media_gateway.respawn_delay: 2.0
 
     launch.robot_status_collector.kind: lifecycle_node
     launch.robot_status_collector.package: robot_status_collector
@@ -56,6 +65,7 @@ communications_lifecycle_manager:
   ros__parameters:
     node_names:
       - cloud_gateway
+      - media_gateway
     autostart: true
     transition_attempts: 3
     service_timeout_ms: 2000
@@ -133,3 +143,59 @@ cloud_gateway:
     bond_id: cloud_gateway
     bond_heartbeat_period_s: 0.1
     bond_heartbeat_timeout_s: 1.0
+
+media_gateway:
+  ros__parameters:
+    stream_names:
+      - odin_camera
+    process_shutdown_timeout_s: 5.0
+    diagnostics_period_s: 1.0
+    monitor_period_s: 1.0
+
+    enable_bond: true
+    bond_topic_name: /communications_lifecycle_manager/bond
+    bond_id: media_gateway
+    bond_heartbeat_period_s: 0.1
+    bond_heartbeat_timeout_s: 3.0
+
+    # Odin1 camera: JPEG 1600x1296 at about 10 Hz on /odin1/image/compressed (ROS 1), carried to ROS 2 by odin-bridge.
+    # Pipeline (from media_gateway.cpp): jpegdec ! nvvidconv ! scale ! overlay ! nvv4l2h264enc ! appsink.
+    streams.odin_camera.enabled: false
+    streams.odin_camera.channel_name: pulse-dev-unitree-go2-000.odin_camera
+    streams.odin_camera.client_id: ProducerMaster
+    streams.odin_camera.max_concurrent_viewers: 10
+    streams.odin_camera.media_type: video-only
+    streams.odin_camera.source_type: ros_compressed_image
+    streams.odin_camera.video_device: ""
+    streams.odin_camera.rtsp_uri: ""
+    streams.odin_camera.ros_topic: ""
+    streams.odin_camera.ros_compressed_topic: /odin1/image/compressed
+    streams.odin_camera.ros_compressed_format: jpeg
+    streams.odin_camera.ros_image_encoding: ""
+    streams.odin_camera.source_stale_after_ms: 10000
+    streams.odin_camera.restart_on_stale: true
+    streams.odin_camera.custom_pipeline: ""
+    streams.odin_camera.csi_sensor_id: 0
+    streams.odin_camera.video_width: 1280
+    streams.odin_camera.video_height: 1040
+    streams.odin_camera.video_framerate: 10
+    streams.odin_camera.bitrate_kbps: 2000
+    streams.odin_camera.encoder: nvv4l2h264
+    streams.odin_camera.overlay_clock: true
+    streams.odin_camera.overlay_label: go2-000.odin
+    streams.odin_camera.appsink_max_buffers: 1
+    streams.odin_camera.rtsp_latency_ms: 100
+    streams.odin_camera.audio_enabled: false
+    streams.odin_camera.audio_device: ""
+    streams.odin_camera.audio_codec: opus
+    streams.odin_camera.ice_transport_policy: relay
+    streams.odin_camera.aws_region: eu-west-1
+    streams.odin_camera.iot_credential_endpoint: c2st2rq0nl9nl1.credentials.iot.eu-west-1.amazonaws.com
+    streams.odin_camera.iot_role_alias: PulseKvsWebrtcRoleAlias
+    streams.odin_camera.iot_thing_name: pulse-dev-unitree-go2-000
+    streams.odin_camera.iot_certificate_path: /etc/ardia/iot/certs/robot.crt
+    streams.odin_camera.iot_private_key_path: /etc/ardia/iot/private/robot.key
+    streams.odin_camera.iot_ca_path: /etc/ardia/iot/ca/amazon-root-ca.pem
+    streams.odin_camera.iot_certificate_id: ""
+    streams.odin_camera.restart_on_error: true
+    streams.odin_camera.restart_delay_s: 2.0

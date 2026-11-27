@@ -34,6 +34,8 @@ Tests (no ROS needed): `python3 tests/test_logic.py` (helpers in `cloud_logic.py
 - DDS: FastRTPS, domain 42, UDP only (`profile/dds/fastdds_udp.xml`), the same as the bridge. The Go2's own Pulse runtime uses CycloneDDS on domain 0, so the two do not see each other.
 - The identity is shared with the Go2 runtime. With a real broker, `start_cloud.sh` refuses to start while `ardia-pulse-runtime` is running.
 - The mock broker keeps no readable log: `test_phase1.sh` checks the messages the gateway receives and its `outbound_published_count`. The real MQTT output is checked in Phase 3.
+- **Phase 2 (camera).** The profile also has the `media_gateway` with the stream `odin_camera` (source `ros_compressed_image` on `/odin1/image/compressed`, 1280x1040, 10 fps, 2000 kbps, `nvv4l2h264`). It is `enabled: false`: the media gateway starts KVS signaling before the GStreamer pipeline, so a stream cannot run without real AWS access. The container runs with the NVIDIA runtime for the encoder. The bridge carries the camera into ROS 2 at the full 10 Hz (measured 27 Nov 2026: 0.77 MB frames, about 8 MB/s).
+- `./bench_camera_pipeline.sh [seconds]` measures the video pipeline without AWS (same GStreamer chain as `media_gateway`, one real frame repeated): fps and CPU. It starts one throwaway container and removes it.
 - The node alone, inside ons2-go2: `python3 cloud_publisher.py _config:=config/cloud_publisher.yaml`
 
 Seen on the robot (27 Nov 2026, before the envelope and merged status): pose, YOLO, map, nav `IDLE`, stack and Florence. Not tested: the new envelope on the robot, the bridge to ROS 2, the gateway, `NAVIGATING`.

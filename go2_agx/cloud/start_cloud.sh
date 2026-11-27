@@ -59,7 +59,8 @@ echo "== 3. Pulse runtime ($NAME, $IMAGE)"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 IOT=()
 [ "$BROKER" = mock ] || IOT=(-v "${ARDIA_IOT_DIR:-/etc/ardia/iot}:/etc/ardia/iot:ro")
-docker run -d --name "$NAME" --init --network host --stop-signal SIGINT --stop-timeout 20 \
+docker run -d --name "$NAME" --init --network host --runtime nvidia --stop-signal SIGINT --stop-timeout 20 \
+  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=video,compute,utility \
   -e ROS_DOMAIN_ID=42 -e ROS_LOCALHOST_ONLY=0 -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
   -e FASTRTPS_DEFAULT_PROFILES_FILE=/etc/ardia/dds/fastdds_udp.xml \
   -e FASTDDS_DEFAULT_PROFILES_FILE=/etc/ardia/dds/fastdds_udp.xml -e CYCLONEDDS_URI= \
