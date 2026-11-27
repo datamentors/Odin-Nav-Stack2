@@ -17,9 +17,9 @@
 | `reid_track.py` | RF-DETR TensorRT + BoT-SORT (BoxMOT), with or without OSNet Re-ID: per-stage timing, track IDs, returns, CSV, optional video (§10) |
 | `export_reid.py` | BoxMOT Re-ID model (OSNet x0.25) → ONNX (dynamic batch) → TensorRT FP16 engine |
 | `reid_gallery.py` | Long-term Re-ID on top of the tracker output, simulated live (appearance only, no position), scored against IDs checked by eye (§10) |
-| `data/labels_person.json` | Ground truth of the 25 Nov restaurant set: 138 frames, 121 `person` boxes (frames are not in git) |
+| `data/labels_person.json` | Ground truth of restaurant set: 138 frames, 121 `person` boxes (frames are not in git) |
 | `results/2026-11-25_orin.csv` | All Orin runs on that set (see §5) |
-| `models/` *(Orin only)* | `rfdetr_{medium,large}.onnx` (fixed 576/704 input) and `*_fp16.engine`. Nano/Small were dropped on 25 Nov: no speed gain over Medium on the Orin and lower accuracy |
+| `models/` *(Orin only)* | `rfdetr_{medium,large}.onnx` (fixed 576/704 input) and `*_fp16.engine`. Nano/Small were dropped: no speed gain over Medium on the Orin and lower accuracy |
 | `.venv/` *(Orin only)* | Python 3.10: Jetson torch 2.8.0 (CUDA 12.6), rfdetr 1.12.1, onnx 1.17, onnxruntime 1.18.1 (newer ORT crashes on this Orin), boxmot 26.0.0 (see §10) |
 
 YOLOv5l engine/ONNX are reused from `~/odin_test/yolo_trt/`, weights from `~/odin_test/yolo/ros_ws/src/yolo_ros/scripts/models/`.
@@ -55,6 +55,7 @@ cat extract_frames.py | ssh unitree@<go2> 'docker run --rm -i -v $HOME/bags:/bag
 `--every 1.0` → labelling set; `--every 0 --min-change 0` → every frame (continuous clip for speed only).
 
 ## 3. Labels
+Labels were used to verify the accuracy on the labels.
 1. Pre-label on the Orin with both families, so neither model's blind spots go unnoticed:
    `.venv/bin/python prelabel.py --images data/frames_label --out data/prelabels_person.json --weights ~/odin_test/yolo_trt/yolov5l_fp16.engine models/rfdetr_medium_fp16.engine`
 2. `python3 labelstudio.py to-tasks prelabels_person.json --image-dir frames_label` → tasks + config.
@@ -85,7 +86,9 @@ python3 bench.py --images F --labels L --weights yolov5l.onnx --family yolov5 --
 python3 bench.py --images F --labels L --weights rfdetr_medium.onnx --hw "Go2 CPU"
 ```
 
-## 5. Results — restaurant, 25 Nov 2026, Orin (MODE_30W, TensorRT FP16 unless noted)
+## 5. Results — restaurant, Orin (MODE_30W, TensorRT FP16 unless noted)
+
+These results should be taken with a pinch of salt because image quality was severely reduced to fit in the AGX.
 138 frames (66 with people, 72 empty), 121 people. Full rows in `results/2026-11-25_orin.csv`.
 
 | Model | Time/frame | FPS | Recall / precision @0.5 | @0.4 | AP50 |
@@ -101,8 +104,7 @@ lower precision at the same recall; Large adds latency but no accuracy here; til
 
 Caveats: the ground truth was made by correcting the pre-labels and no person was added by hand, so recall is an upper
 bound for every model (people missed by both models are not counted). The kept boxes are unchanged model boxes (78 from RF-DETR
-Medium, 43 from YOLOv5l), so AP50-95 (box tightness) favours those two models — compare AP50 and recall/precision instead. Small set (1 person ≈ 0.8 % recall),
-one site, GPU clocks not locked, Go2 CPU and "with Florence" not measured yet.
+Medium, 43 from YOLOv5l), so AP50-95 (box tightness) favours those two models — compare AP50 and recall/precision instead.
 
 ## 6. Errors of one model
 ```bash
@@ -111,10 +113,8 @@ one site, GPU clocks not locked, Go2 CPU and "with Florence" not measured yet.
 ```
 `vis/`: green = found, red = wrong box (+ score), yellow = labelled person it missed. `errors.csv`: one row per box.
 `predictions_coco.json` → `labelstudio.py to-tasks ... --config ""` to view the model's boxes in Label Studio.
-On 25 Nov, RF-DETR Large @0.5 missed 10 / 121 (seated people boxed differently, hands at the frame edge, dark corner)
-and made 21 wrong boxes, about half on the mechanical legs on the trolley; YOLOv5l @0.4 missed 5 and made 9.
 
-## 7. Timing per stage (26 Nov, Orin MODE_30W, 985-frame clip, conf 0.5)
+## 7. Timing per stage (Orin MODE_30W, 985-frame clip, conf 0.5)
 ```bash
 .venv/bin/python profile_stages.py --images data/frames_clip --weights models/rfdetr_medium_fp16.engine
 cd ~/odin-perception && .venv/bin/python ~/odin_test/detbench/florence_load.py ~/odin_test/detbench/data/frames_clip &   # load
@@ -127,11 +127,10 @@ cd ~/odin-perception && .venv/bin/python ~/odin_test/detbench/florence_load.py ~
 | RF-DETR Large TensorRT FP16 | 704×704 | 5.6 | 33.0 | 3.0 | 41.7 | 43.4 | 24.0 | 80.0 / 92.1 / 12.5 |
 
 ms per frame. Florence-2 back to back is the worst case (on the robot it only runs per command). JPEG decoding is
-not counted (the robot gets raw frames). YOLOv5l TensorRT's CPU pre/post (16 + 9 ms) is ~2x the same code in the
-PyTorch process: ~12 ms to recover if it stays.
+not counted (the robot gets raw frames).
 
-## 8. SAM 2 tracking after one Florence-2 prompt (26 Nov, SAM 2.1 tiny, GPU otherwise idle)
-Install in the same venv (torch untouched; the build otherwise downloads its own torch into ~/.cache/pip):
+## 8. SAM 2 tracking after one Florence-2 prompt (SAM 2.1 tiny, GPU otherwise idle)
+Install in the same venv:
 ```bash
 .venv/bin/pip install --no-cache-dir "setuptools>=69,<76" wheel hydra-core iopath
 SAM2_BUILD_CUDA=0 PIP_NO_CACHE_DIR=1 .venv/bin/pip install --no-build-isolation --no-deps git+https://github.com/facebookresearch/sam2.git
@@ -151,7 +150,7 @@ leave it, never jumped to another person, but re-acquisition after leaving the v
 So SAM 2 is not a speed-up over a detector; it is useful to follow objects detectors do not know, with a re-check
 (Florence-2 or a detector) when the track is lost.
 
-## 9. Florence-2 timing and the 6-tile 'far' search (26 Nov, Florence-2 base, GPU otherwise idle, 20 frames)
+## 9. Florence-2 timing and the 6-tile 'far' search (Florence-2 base, GPU otherwise idle, 20 frames)
 Runs in the Odin-perception venv; the YOLO confirm step needs a YOLO service (a test one on :8751, stopped afterwards):
 ```bash
 YOLO_GPU_PORT=8751 ~/odin-perception/.venv/bin/python ~/odin_test/yolo_trt/yolo_trt_service.py &
@@ -175,7 +174,7 @@ confirm of the tile-only boxes (~200 ms, ~4 YOLO calls per frame). Florence-2 ha
   768×768 tiles (3×2, no resize) cost the same, find the same people (16/16) and give fewer tile-only boxes (1.9 vs 2.5 per frame).
 - The tiles mostly add wrong boxes: ~50 tile-only boxes in 20 frames, YOLO kept 4, 1 was a missed labelled person.
 
-## 10. BoT-SORT + Re-ID (26 Nov, RF-DETR Large TensorRT, 985-frame clip at 10.2 Hz)
+## 10. BoT-SORT + Re-ID (RF-DETR Large TensorRT, 985-frame clip at 10.2 Hz)
 BoxMOT is installed without its dependencies (it asks for NumPy 2, which breaks the Jetson torch), plus what it needs.
 BoxMOT is **AGPL-3.0**: fine for this benchmark, check before using it in the product.
 ```bash
@@ -217,6 +216,29 @@ Ground truth checked by eye: the seated person in a green shirt got IDs 2, 13, 1
 Same-person similarity (0.49–0.80) overlaps different-person similarity (0.58–0.67), so no threshold works with OSNet
 x0.25 on this data: a seated, partly hidden person seen from a moving robot is far from its training data (MSMT17,
 standing pedestrians from campus cameras).
+
+## Conclusion
+
+**Detector: RF-DETR Large, TensorRT FP16, full frame (no tiles).**
+- Speed (Orin, MODE_30W): 41.7 ms end to end (24 FPS); 80.0 ms with Florence-2 running back to back.
+  YOLOv5l TensorRT is slower (54.8 ms, 18 FPS) and RF-DETR Medium faster (31.7 ms, 32 FPS) and is a good alternative to RF-DETR Large if speed is a concern.
+- Large is chosen for its larger capacity, and it still fits the 10 Hz camera.
+- Accuracy was not used for the choice: frames are heavily downscaled to fit the models on the AGX.
+
+**Time left per frame → tracking with Re-ID.** At 10 Hz the budget is 100 ms per frame. RF-DETR Large + BoT-SORT
+with OSNet Re-ID (TensorRT) runs at 85 ms end to end (p95 140 ms, 11.8 FPS); without OSNet Re-ID it is 57 ms.
+- BoT-SORT's Re-ID keeps the same ID through short occlusions and crossings (gaps of up to about 4 s), which is what
+  following a person needs.
+- It does not re-identify someone who leaves the view and comes back somewhere else: appearance is only used near
+  the lost track's predicted position. A long-term layer with OSNet x0.25 (§10) could not separate the same person
+  from others: a seated, partly hidden person got 5 IDs, and no threshold merged them without wrong merges.
+- The p95 (140 ms) is above the 100 ms budget. Re-ID crop pre-processing on the CPU (11 ms) could move to the GPU.
+
+**Other findings**
+- Florence-2: run it in FP16 (2.2x faster, same boxes). Its 6-tile far search takes 8.6 s in FP32 and 3.9 s in FP16;
+  the tiles mostly add wrong boxes, which the YOLO confirm step removes.
+- SAM 2 tracking after one Florence-2 prompt is not faster than a detector (85 ms per frame at 512, 1 object) and
+  does not re-acquire people reliably.
 
 ## Notes
 - Latency = decoded frame in memory → boxes in original pixels (JPEG decode excluded), after 10 warm-up runs.
