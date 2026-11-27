@@ -18,7 +18,7 @@ camera ─► per-frame DETECTOR (yolov5 | rfdetr | yoloe) ─► TRACKER (none 
 - **First detection:** Florence-2 is the slow, on-demand search for any phrase. YOLOE is the fast option for words you
   give it, and it runs on every frame.
 - **Per-frame detector:** the light model that runs on every camera frame.
-- **Tracker:** gives every detection an ID across frames, or (SAM 2) follows one object you point at with a box.
+- **Tracker:** gives every detection an ID across frames, or (SAM 2) follows one object given by a box or a class name.
 - **Target:** the one tracked object to follow, picked with a box, a class name or a track ID. When it was picked with a
   class, the service picks the best detection of that class again by itself after losing it (see `FOCUS_CONF` below).
 

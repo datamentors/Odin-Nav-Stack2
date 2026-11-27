@@ -181,7 +181,15 @@ The detector (`yolov5`, `rfdetr` or the open-vocabulary `yoloe`), the tracker (`
 `sam2`) and the image size the models get are chosen in `~/.config/go2_agx/detector.env`. Results go to `/perception/*`
 (boxes, 3D, masks, track IDs, a full-resolution debug image) and to the upstream `/yolo_*` topics, so `object_query_node`,
 `yolo_cmd_bridge.py`, `cloud_publisher` and the Foxglove layout keep working. Florence-2 runs next to it: its `track N` and the YOLO panel's
-`find ...` / `track N` drive the detector's tracker and YOLOE. Nothing in ONS2 follows `/perception/target_3d` yet.
+`find ...` / `track N` drive the detector's tracker and YOLOE. A target picked by class is re-acquired by the service
+after a loss (`FOCUS_CONF`, `ACQUIRE_CONF`, `REACQUIRE_FRAMES`); `sam2` uses SAM 2's video memory. Nothing in ONS2 follows
+`/perception/target_3d` yet.
+
+```bash
+cp go2_agx/detector.env.example ~/.config/go2_agx/detector.env      # once; then pick DETECTOR / TRACKER in it
+~/odin_test/start_yolo_gpu_agx.sh                                    # or: --detector yoloe --tracker sam2 --scale 40
+GO2_SSH=local ./go2_agx/test_stack.sh all                            # full check on the Go2
+```
 
 ---
 
