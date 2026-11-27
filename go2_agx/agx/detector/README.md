@@ -125,12 +125,16 @@ The order matters. Commands are for the AGX layout; in single-machine mode run t
 3. On the AGX, start the detector (GPU service + ROS node): `~/odin_test/start_yolo_gpu_agx.sh`
 4. Optionally, on the AGX, start Florence-2: `~/odin_test/start_perception_agx.sh`
 5. On the Go2, start ONS2 with the detector on the AGX: `~/ons2_docker/ons2_start.sh --map=<map> --with-yolo-agx`
+   (add `--with-cloud` to also send the detections to the cloud: `cloud_publisher` reads `/yolo_detections_3d`,
+   `/yolo_class_names` and `/florence/objects_3d`, see `go2_agx/cloud/README.md`)
 
 | Process | Container | What |
 |---|---|---|
 | `yolosvc` | `odin-gpu` (or the host) | `detector_service.py`: detector + tracker, HTTP on `127.0.0.1:8750` |
 | `yolo` | `odin-agx` | `detector_node.py`, ROS node `/yolo_detector`: publishes the topics below |
 | `florence`, `capture`, `relay` | `odin-gpu` / `odin-agx` | Florence-2 service, frame server, Foxglove relay |
+
+Test everything on the Go2 (add `CLOUD=1` to include the cloud messages): `GO2_SSH=local ./go2_agx/test_stack.sh all`.
 
 Check and stop:
 
@@ -168,7 +172,7 @@ Images, masks and the debug overlay are only computed while someone subscribes.
 | `/perception/target_3d` | `geometry_msgs/PointStamped` | the target's 3D point in the camera frame |
 | `/perception/target/status` | `std_msgs/String` (latched) | result of the last target selection |
 | `/perception/query/status` | `std_msgs/String` (latched) | result of the last YOLOE query |
-| `/yolo_detections`, `/yolo_detections_3d`, `/yolo_class_names`, `/yolo_debug_image(/compressed)` | as upstream | the old topics, detector objects only, kept for the Foxglove bridge, `object_query_node` and the layout |
+| `/yolo_detections`, `/yolo_detections_3d`, `/yolo_class_names`, `/yolo_debug_image(/compressed)` | as upstream | the old topics, detector objects only, kept for the Foxglove bridge, `object_query_node`, `cloud_publisher` (`go2_agx/cloud`) and the layout |
 | `/florence/result`, `/florence/objects_3d`, `/inspection/annotated/compressed` | String, String (JSON), CompressedImage | Florence-2 answers, its objects with 3D point and 2D box, and its annotated image |
 
 All 3D outputs are in the camera's optical frame: x right, y down, z forward. Track IDs only appear in the JSON and on

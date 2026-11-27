@@ -20,7 +20,7 @@ flowchart LR
       D["pcd2depth<br/>(depth image)"]
       Y["YOLO node + Florence-2<br/>frame server and relay"]
     end
-    G["GPU model services<br/>detector (YOLOv5l / RF-DETR + tracker), Florence-2<br/>(optional container odin-gpu, otherwise on the host)"]
+    G["GPU model services<br/>detector (YOLOv5l / RF-DETR / YOLOE + tracker), Florence-2<br/>(optional container odin-gpu, otherwise on the host)"]
     W["watchdog + autostart"]
     Y <-- "HTTP, 127.0.0.1" --> G
   end
@@ -30,10 +30,14 @@ flowchart LR
       N["ONS2<br/>map planner · NeuPAN · mission manager"]
       B["command bridge<br/>(go to / follow / stop / reset)"]
       C["chassis bridge<br/>(optional)"]
+      CP["cloud_publisher<br/>(optional, JSON for the cloud)"]
     end
     RB["ROS 1 to ROS 2 bridge<br/>(optional, own container)"]
     M -.- RB
+    CP -.- RB
   end
+  AW["Pulse runtime (ardia-robotics)<br/>AWS IoT · KVS"]
+  RB -. "ROS 2" .-> AW
   FG["Foxglove<br/>(laptop)"]
   O1 & D & Y -- "Ethernet, ROS 1" --> M
   M --- N & B
@@ -43,8 +47,8 @@ flowchart LR
 
 | Machine | Runs |
 |---|---|
-| **Jetson AGX Orin** | One container `odin-agx` with the Odin1 driver (the color camera needs USB 3), depth image, YOLO detector node, Florence-2 frame server and relay (separate processes inside it). The detector (YOLOv5l or RF-DETR + tracker) and Florence-2 GPU services run on the host, or in the optional container `odin-gpu` (see §GPU container). On the host: watchdog and autostart services |
-| **Go2 computer** | One container `ons2-go2` with the ROS 1 master, ONS2, command bridge, optional chassis bridge and Foxglove bridge (separate processes inside it; host ROS 2 untouched). Optional, only for the remote web monitor: a second container `odin-bridge` (ROS 1 ↔ ROS 2) |
+| **Jetson AGX Orin** | One container `odin-agx` with the Odin1 driver (the color camera needs USB 3), depth image, YOLO detector node, Florence-2 frame server and relay (separate processes inside it). The detector (YOLOv5l, RF-DETR or YOLOE + tracker) and Florence-2 GPU services run on the host, or in the optional container `odin-gpu` (see §GPU container). On the host: watchdog and autostart services |
+| **Go2 computer** | One container `ons2-go2` with the ROS 1 master, ONS2, command bridge, optional chassis bridge and Foxglove bridge (separate processes inside it; host ROS 2 untouched). Optional: `cloud_publisher` (`--with-cloud`, JSON for the cloud link, see `cloud/README.md`) and a second container `odin-bridge` (ROS 1 ↔ ROS 2) that carries it and the camera to the cloud side, or feeds the remote web monitor |
 | **Laptop** | Foxglove layout with command panels and STOP / RESET buttons |
 
 ---
@@ -137,9 +141,10 @@ map, so they can be used by `go F#`.
 |---|---|
 | `go2/` | `start_odin_remote.sh` / `stop_odin_remote.sh` (create / remove the container `ons2-go2` with the ROS 1 master), `ons2_start.sh` / `ons2_stop.sh` (start / stop ONS2 inside it), `Dockerfile` (image `ons2:go2`), `start_bridge.sh` / `stop_bridge.sh` (optional ROS 1 ↔ ROS 2 bridge, container `odin-bridge`), `fastdds_udp.xml` (for the bridge), `remote_monitor_start.sh` (upstream web monitor on the Go2 host) |
 | `agx/` | `agx_lib.sh` (helpers for the single container `odin-agx`, one process per component, and for the optional container `odin-gpu`), `start_odin_agx.sh` / `stop_odin_agx.sh` (creates the container, starts / stops the Odin1 driver), `start_depth_agx.sh`, `start_yolo_gpu_agx.sh` / `stop_yolo_gpu_agx.sh`, `start_perception_agx.sh` (Florence-2), `florence_service.py`, `florence_cmd_relay.py`, `cam_stream.py` (MJPEG camera view), `fix_odin_usb.sh`, `control_command_agx.yaml`, `odin_depth.launch`, `checklist.example.yaml` (for the Florence command `all`) |
-| `agx/detector/` | The GPU detector, see §5.1: `detector_service.py` (HTTP service on 127.0.0.1:8750: detector + tracker), `detectors.py` (YOLOv5, RF-DETR), `trackers.py` (IoU, BoT-SORT, SAM 2), `detector_node.py` (ROS node, upstream `yolo_detector` topics + tracks), `depth3d.py` (box → 3D, shared with the Florence relay), `get_models.sh`, `export_rfdetr.py`, `export_reid.py` |
+| `agx/detector/` | The GPU detector, see §5.1: `detector_service.py` (HTTP service on 127.0.0.1:8750: detector + tracker), `detectors.py` (YOLOv5, RF-DETR, YOLOE), `trackers.py` (IoU, BoT-SORT, SAM 2), `detector_node.py` (ROS node, upstream `yolo_detector` topics + tracks), `depth3d.py` (box → 3D, shared with the Florence relay), `get_models.sh`, `export_rfdetr.py`, `export_reid.py` |
 | `agx/yolo_gpu/` | `yolo5_stubs.py` (lets the YOLOv5 code load `.pt` weights without its training extras) |
 | `agx/yolo_trt/` | `get_weights.sh` (YOLOv5 weights), `export_onnx.py` (YOLOv5l → ONNX), `build_engine.sh` (TensorRT FP16 engine) |
+| `cloud/` | `cloud_publisher.py` (ROS 1 node: pose, map, mission state, YOLO and Florence-2 as JSON on `/cloud_gateway/{telemetry,status,events}`), `cloud_logic.py`, `config/cloud_publisher.yaml`, JSON `schemas/` and `examples/`, `tests/`. No AWS code: the cloud side is the Pulse profile in ardia-robotics. See [`cloud/README.md`](cloud/README.md) |
 | `detector.env.example` | Detector / tracker selection, copied to `~/.config/go2_agx/detector.env` |
 | `agx/system/` | `odin_watchdog.sh`, `odin_autostart.sh`, `odin_usb_tuning.sh`, their systemd units and the udev rule |
 | `agx/docker/` | `Dockerfile.driver` (image `odin-drv:0144`, build base), `Dockerfile.yolo` (image `odin-yolo:0144`, the image the container `odin-agx` runs), `Dockerfile.gpu` (image `odin-gpu:go2`, the optional container for the GPU model services) |
@@ -175,7 +180,7 @@ host, `127.0.0.1:8750`) and the ROS node `detector/detector_node.py` (process `y
 The detector (`yolov5`, `rfdetr` or the open-vocabulary `yoloe`), the tracker (`none`, `iou`, `botsort`, `botsort_reid`,
 `sam2`) and the image size the models get are chosen in `~/.config/go2_agx/detector.env`. Results go to `/perception/*`
 (boxes, 3D, masks, track IDs, a full-resolution debug image) and to the upstream `/yolo_*` topics, so `object_query_node`,
-`yolo_cmd_bridge.py` and the Foxglove layout keep working. Florence-2 runs next to it: its `track N` and the YOLO panel's
+`yolo_cmd_bridge.py`, `cloud_publisher` and the Foxglove layout keep working. Florence-2 runs next to it: its `track N` and the YOLO panel's
 `find ...` / `track N` drive the detector's tracker and YOLOE. Nothing in ONS2 follows `/perception/target_3d` yet.
 
 ---
@@ -431,6 +436,8 @@ computer and the AGX, with the same values. The scripts stop with a message whil
 - **Logs** generated at run time.
 - **Local backup copies** and earlier experiments not used by this setup.
 - **Site network details and credentials.**
+- **The cloud side** (cloud and media gateways, AWS IoT / KVS, their credentials): the Pulse profile in ardia-robotics,
+  branch `go2-demo`. This repo only publishes the ROS topics it reads (`cloud/README.md`).
 
 ---
 
