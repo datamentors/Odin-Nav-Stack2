@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start and test the whole go2_agx stack from ONE machine that can SSH to the robot(s) (a PC).
+# Start and test the whole go2_agx stack from ONE machine that can SSH to the robot(s) (a PC), or ON the Go2 itself (GO2_SSH=local).
 # It never starts the chassis bridge: nothing it does makes the robot's legs move.
 #
 # Layouts (STACK=...):
@@ -20,7 +20,7 @@
 #   ./go2_agx/test_stack.sh all        check + start + verify        (add --stop-after to stop at the end)
 #
 # Settings (environment). SSH keys are best; for passwords pass them only through the environment, never in a file:
-#   GO2_SSH=user@host  GO2_SSHPASS=...                      (always)
+#   GO2_SSH=user@host  GO2_SSHPASS=...                      (always; GO2_SSH=local runs everything on this machine, STACK=single only)
 #   AGX_SSH=user@host  AGX_SSHPASS=...                      (STACK=two only)
 #   NO_MAP=1   test away from the mapped site: the Odin1 runs in odometry mode (custom_map_mode 0, the map frame equals the odom
 #              frame, no relocalization) and ONS2 uses the empty placeholder map (--map=empty). Not the real map: only a functional test.
@@ -29,7 +29,8 @@ GO2_SSH="${GO2_SSH:?set GO2_SSH, e.g. GO2_SSH=user@192.168.x.x}"
 STACK="${STACK:-single}"
 case "$STACK" in
   single) AGX_SSH="$GO2_SSH"; AGX_SSHPASS="${GO2_SSHPASS:-}"; AGX_MODE=same; WHO_AGX="the Go2" ;;
-  two)    AGX_SSH="${AGX_SSH:?STACK=two needs AGX_SSH}"; AGX_MODE=go2; WHO_AGX="the AGX" ;;
+  two)    [ "$GO2_SSH" = local ] && { echo "GO2_SSH=local works only with STACK=single"; exit 1; }
+          AGX_SSH="${AGX_SSH:?STACK=two needs AGX_SSH}"; AGX_MODE=go2; WHO_AGX="the AGX" ;;
   *) echo "STACK must be single or two"; exit 1 ;;
 esac
 MAP="${MAP:-restaurant_walls}"; NO_MAP="${NO_MAP:-0}"; [ "$NO_MAP" = 1 ] && MAP=empty
@@ -38,12 +39,14 @@ SSHOPTS="-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
 CMD="${1:-check}"; shift || true
 
 rsh() { local host=$1 pass=$2; shift 2
-  if [ -n "$pass" ]; then SSHPASS="$pass" sshpass -e ssh $SSHOPTS "$host" "$@"; else ssh $SSHOPTS "$host" "$@"; fi; }
+  if [ "$host" = local ]; then bash -c "$*"
+  elif [ -n "$pass" ]; then SSHPASS="$pass" sshpass -e ssh $SSHOPTS "$host" "$@"; else ssh $SSHOPTS "$host" "$@"; fi; }
 g() { rsh "$GO2_SSH" "${GO2_SSHPASS:-}" "$@"; }       # command on the Go2 computer
 a() { rsh "$AGX_SSH" "${AGX_SSHPASS:-}" "$@"; }       # command on the machine that runs odin-agx (the Go2 when STACK=single)
 gros() { g 'docker exec -i ons2-go2 bash -s' <<< "source /opt/ros/noetic/setup.bash; source \$HOME/ons2/ros_ws/devel/setup.bash 2>/dev/null; $1"; }
 rsync_to() { local host=$1 pass=$2 src=$3 dest=$4; shift 4   # rsync_to HOST PASS SRC DEST_DIR [rsync options]
-  if [ -n "$pass" ]; then SSHPASS="$pass" sshpass -e rsync -a "$@" -e "ssh $SSHOPTS" "$src" "$host:$dest"; else rsync -a "$@" -e "ssh $SSHOPTS" "$src" "$host:$dest"; fi; }
+  if [ "$host" = local ]; then rsync -a "$@" "$src" "${dest/#\~/$HOME}"
+  elif [ -n "$pass" ]; then SSHPASS="$pass" sshpass -e rsync -a "$@" -e "ssh $SSHOPTS" "$src" "$host:$dest"; else rsync -a "$@" -e "ssh $SSHOPTS" "$src" "$host:$dest"; fi; }
 
 PASS=0; FAIL=0
 ok()  { echo "  PASS  $*"; PASS=$((PASS+1)); }
