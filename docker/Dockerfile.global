@@ -90,6 +90,7 @@ RUN /opt/conda/envs/neupan/bin/pip install --no-cache-dir \
 RUN mkdir -p /opt/odin/ros_ws/src \
  && ln -sf /opt/ros/${ROS_DISTRO}/share/catkin/cmake/toplevel.cmake /opt/odin/ros_ws/src/CMakeLists.txt
 COPY ros_ws/src/odin_ros_driver             /opt/odin/ros_ws/src/odin_ros_driver
+COPY ros_ws/src/nav_interfaces              /opt/odin/ros_ws/src/nav_interfaces
 COPY ros_ws/src/map_planner                 /opt/odin/ros_ws/src/map_planner
 COPY ros_ws/src/sliding_map                 /opt/odin/ros_ws/src/sliding_map
 COPY ros_ws/src/pcd2pgm                     /opt/odin/ros_ws/src/pcd2pgm
