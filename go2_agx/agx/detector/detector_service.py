@@ -10,6 +10,10 @@ Selection (environment variables, normally set by start_yolo_gpu_agx.sh from ~/.
   TRACKER           none (default) | iou | botsort | botsort_reid | sam2      see trackers.py
   DETECTOR_PORT     8750
   HISTORY_SEC       5      recent frames kept to place a target box given with an older time stamp (e.g. Florence-2)
+  FOCUS_CONF        0.1    the class of the target (once chosen) is detected down to this score (the detectors score a
+                           suitcase or a far chair well below the usual 0.25)
+  ACQUIRE_CONF      0.2    lowest score a detection of that class needs to become the target again on its own
+  REACQUIRE_FRAMES  5      frames without the target before the best detection of its class is picked again
 
 API. Images are raw BGR uint8 bytes with the header X-Shape: "h,w"; boxes are [x1, y1, x2, y2] in pixels of the image sent.
   GET  /health   "ok <detector> | <tracker> | <ms> ms/img (<n> images)"
@@ -29,7 +33,10 @@ API. Images are raw BGR uint8 bytes with the header X-Shape: "h,w"; boxes are [x
                                                                stamp (prompted tracker: starts on that box and frame)
            box in pixels of the image sent, or with "box_scale": "full" in pixels of the original image (converted
            with the scale that frame was sent with)
-       {"name": "person"}                                      the most confident current track of that class
+       {"name": "person"}                                      the most confident current track of that class (or
+                                                               the next one that appears)
+       Selecting with a class (cls, or a name) also makes it the class to follow: when the target is lost, the best
+       detection of that class (score >= ACQUIRE_CONF) becomes the target again after REACQUIRE_FRAMES frames.
        {"track_id": <id>}  |  {"clear": true}
        -> {"ok", "target", "detail"}
   POST /classes  JSON {"names": ["chair", "fire extinguisher"]} (replace), {"add": [...]}, {"remove": [...]}
@@ -64,6 +71,12 @@ class Pipeline:
         self.history = collections.deque()    # {"stamp", "objects" (tracked ones), "img" (prompted trackers only)}
         self.history_sec = history_sec
         self.target = None                    # {"id", "visible"}
+        self.want = None                      # class id to follow: re-acquired on its own after a loss (None = off)
+        self.lost = 0                         # frames since the target was last visible
+        env = os.environ.get
+        self.focus_conf = float(env("FOCUS_CONF", "0.1"))
+        self.acquire_conf = float(env("ACQUIRE_CONF", "0.2"))
+        self.reacquire = int(env("REACQUIRE_FRAMES", "5"))
         self.names_version = 0                # bumped when an open-vocabulary detector gets new classes
         self.stats = {"n": 0, "ms": 0.0}
         print("Detector service: %s | tracker %s | loaded in %.1f s" % (self.det.desc, self.trk.desc, time.time() - t0),
@@ -87,7 +100,7 @@ class Pipeline:
         with self.lock:
             names = self.det.set_classes(new)
             self.trk.reset()                  # class ids changed meaning: old tracks and the target are void
-            self.target, self.history = None, collections.deque()
+            self.target, self.want, self.history = None, None, collections.deque()
             self.names_version += 1
         names = list(names.values())
         return {"ok": True, "names": names, "names_version": self.names_version,
@@ -109,16 +122,34 @@ class Pipeline:
         t = time.time()
         track = track and self.trk.name != "none"
         with self.lock:
-            dconf = min(conf, self.trk.det_conf) if (track and self.trk.det_conf) else conf
+            want = self.want if track else None
+            dconf = min([conf] + [v for v in (self.trk.det_conf if track else None,
+                                              self.focus_conf if want is not None else None) if v])
             boxes, scores, cls, dmasks = self.det.detect(img, dconf)
             if dmasks is None:
                 dmasks = [None] * len(boxes)
-            ids, extra = self.trk.update(img, boxes, scores, cls) if track else (np.full(len(boxes), -1), [])
-            if track and not self.trk.has_target:
+            started = None
+            if want is not None and self.trk.prompted and not self.trk.has_target:
+                started = self._best(boxes, scores, cls, np.zeros(len(boxes)))   # SAM 2 starts on its own
+            if started is not None:
+                k = started
+                tid = self.trk.start(img, boxes[k], int(cls[k]))
+                self.target, self.lost = {"id": tid, "visible": True}, 0
+                ids, extra = np.full(len(boxes), -1), [{"id": tid, "box": boxes[k], "score": scores[k], "cls": cls[k]}]
+            elif track:
+                ids, extra = self.trk.update(img, boxes, scores, cls)
+            else:
+                ids, extra = np.full(len(boxes), -1), []
+            if track and self.trk.prompted and not self.trk.has_target:
                 self.target = None            # SAM 2 dropped the object
+            if want is not None and not self.trk.prompted and (self.target is None or self.lost >= self.reacquire):
+                k = self._best(boxes, scores, cls, ids)
+                if k is not None:
+                    self.target, self.lost = {"id": int(ids[k]), "visible": True}, 0
             objs, mlist = [], []
             for b, s, c, i, m in zip(boxes, scores, cls, ids, dmasks):
-                if s >= conf or (self.target and i == self.target["id"]):
+                if s >= conf or (want is not None and int(c) == want and s >= self.focus_conf) \
+                        or (self.target and i == self.target["id"]):
                     objs.append(self._obj(b, s, c, i, "detector"))
                     mlist.append(m)
             for e in extra:
@@ -128,6 +159,7 @@ class Pipeline:
                 self._remember(stamp if stamp is not None else time.time(), objs, img, scale)
                 if self.target is not None:
                     self.target["visible"] = any(o["target"] for o in objs)
+                    self.lost = 0 if self.target["visible"] else self.lost + 1
             target = dict(self.target) if self.target else None
         res = {"names_version": self.names_version, "target": target, "objects": objs}
         for k, (o, m) in enumerate(zip(objs, mlist)):
@@ -144,6 +176,13 @@ class Pipeline:
         res["ms"] = round(ms, 1)
         return res
 
+    def _best(self, boxes, scores, cls, ids):
+        """Index of the most confident detection of the wanted class (tracked, unless the tracker is prompted) with
+        score >= ACQUIRE_CONF, or None."""
+        ok = [k for k in range(len(boxes)) if int(cls[k]) == self.want and scores[k] >= self.acquire_conf
+              and (self.trk.prompted or ids[k] >= 0)]
+        return max(ok, key=lambda k: scores[k]) if ok else None
+
     def _remember(self, stamp, objs, img, scale):
         self.history.append({"stamp": stamp, "scale": scale, "objects": [o for o in objs if o["track_id"] is not None],
                              "img": img if self.trk.keeps_frames else None})
@@ -156,20 +195,30 @@ class Pipeline:
             return self._select(req)
 
     def _set(self, tid, detail):
-        self.target = {"id": int(tid), "visible": False}
+        self.target, self.lost = {"id": int(tid), "visible": False}, 0
         return {"ok": True, "target": int(tid), "detail": detail}
 
     def _select(self, req):
         fail = lambda detail: {"ok": False, "target": None, "detail": detail}
         if req.get("clear"):
-            self.target = None
+            self.target = self.want = None
             if self.trk.prompted:
                 self.trk.reset()
             return {"ok": True, "target": None, "detail": "target cleared"}
         if self.trk.name == "none":
             return fail("no tracker running (TRACKER=none)")
+        if "cls" in req and int(req["cls"]) >= 0:
+            self.want = int(req["cls"])
+        elif "name" in req:
+            ids = [k for k, v in self.det.names.items() if v.lower() == str(req["name"]).lower()]
+            self.want = ids[0] if ids else None
         if "box" not in req and self.trk.prompted:
-            return fail("tracker %s needs a box" % self.trk.name)
+            if self.want is not None and "track_id" not in req:   # SAM 2 starts on the next detection of the class
+                self.trk.reset()
+                self.target = None
+                return {"ok": True, "target": None, "detail": "%s starts on the next %s detected" % (
+                    self.trk.name, self.det.names[self.want])}
+            return fail("tracker %s needs a box or a class name" % self.trk.name)
         if "track_id" in req:
             return self._set(req["track_id"], "target = track %d" % int(req["track_id"]))
         if not self.history:
@@ -178,6 +227,8 @@ class Pipeline:
             name = str(req["name"]).lower()
             cands = [o for o in self.history[-1]["objects"] if o["name"].lower() == name]
             if not cands:
+                if self.want is not None:
+                    return {"ok": True, "target": None, "detail": "following the next %s that appears" % name}
                 return fail("no %s tracked in the last frame" % name)
             best = max(cands, key=lambda o: o["score"])
             return self._set(best["track_id"], "target = track %d (%s %.2f)" % (best["track_id"], name, best["score"]))

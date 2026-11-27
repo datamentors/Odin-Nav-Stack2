@@ -47,7 +47,8 @@ svc_stop
 # Settings for the service; optional ones only when set (the Python code has the defaults). Values may contain spaces
 # (YOLOE_CLASSES): exported for the host, single-quoted for the container command.
 ENVS="DETECTOR=$DETECTOR TRACKER=$TRACKER DETECTOR_PORT=$DET_PORT PIP_NO_INDEX=1"
-for v in DETECTOR_WEIGHTS YOLOE_CLASSES YOLOE_IMGSZ SAM2_IMAGE_SIZE SAM2_MODEL; do
+for v in DETECTOR_WEIGHTS YOLOE_CLASSES YOLOE_IMGSZ SAM2_IMAGE_SIZE SAM2_MODEL SAM2_MODE FOCUS_CONF ACQUIRE_CONF \
+         REACQUIRE_FRAMES BOTSORT_HIGH BOTSORT_NEW; do
   [ -n "${!v:-}" ] && { export "$v"; ENVS="$ENVS $v='${!v}'"; }
 done
 echo "Detector $DETECTOR, tracker $TRACKER${DETECTOR_WEIGHTS:+, weights $DETECTOR_WEIGHTS}, model image $([ "$DETECTOR_SCALE" = 0 ] && echo auto || echo "$DETECTOR_SCALE %")"

@@ -19,7 +19,8 @@ camera ─► per-frame DETECTOR (yolov5 | rfdetr | yoloe) ─► TRACKER (none 
   give it, and it runs on every frame.
 - **Per-frame detector:** the light model that runs on every camera frame.
 - **Tracker:** gives every detection an ID across frames, or (SAM 2) follows one object you point at with a box.
-- **Target:** the one tracked object to follow, picked with a box, a class name or a track ID.
+- **Target:** the one tracked object to follow, picked with a box, a class name or a track ID. When it was picked with a
+  class, the service picks the best detection of that class again by itself after losing it (see `FOCUS_CONF` below).
 
 ## 2. Selecting the models
 
@@ -35,6 +36,12 @@ YOLOE_CLASSES=           # yoloe only: e.g. "person, chair, fire extinguisher" (
 DETECTOR_SCALE=          # model image size in % of the camera image (empty = auto, see below)
 SAM2_IMAGE_SIZE=512      # sam2 only: the size SAM 2 works at (multiple of 32; 384 / 256 = faster, coarser masks)
 SAM2_MODEL=tiny          # sam2 only: tiny | small
+SAM2_MODE=video          # sam2 only: video (SAM 2's video memory, default) | image (no memory, older behaviour)
+FOCUS_CONF=0.1           # the target's class is detected down to this score
+ACQUIRE_CONF=0.2         # ...and its best detection above this becomes the target again after a loss
+REACQUIRE_FRAMES=5       # frames without the target before that happens
+BOTSORT_HIGH=0.3         # botsort only: score for the first association / BOTSORT_NEW for a new track
+BOTSORT_NEW=0.35
 YOLOE_IMGSZ=640          # yoloe only: largest input size
 ```
 
@@ -65,7 +72,7 @@ restart: `rostopic pub -1 /perception/set_scale std_msgs/Float32 "data: 30"` (0 
 | `iou` | an ID per detection (simple, no extra packages) | — |
 | `botsort` | BoT-SORT, compensates for camera motion | image built with `WITH_TRACKERS=1` |
 | `botsort_reid` | BoT-SORT + appearance re-identification (keeps IDs through occlusions) | `WITH_TRACKERS=1`, `get_models.sh reid` |
-| `sam2` | SAM 2.1: follows one object given by a box, any class, with a mask | `WITH_TRACKERS=1`, `get_models.sh sam2 tiny` |
+| `sam2` | SAM 2.1 with its video memory: follows one object given by a box or a class name, with a mask | `WITH_TRACKERS=1`, `get_models.sh sam2 tiny` |
 
 To try a combination for one start without editing the file:
 
@@ -105,10 +112,17 @@ service on the robot:
 | YOLOE-11s seg | not measured on the Orin (6 ms on a laptop RTX GPU; a class change ~1.5 s) | |
 
 - Tiling the image was slower and less accurate.
-- SAM 2 does not re-acquire an object reliably after it leaves the view.
 - Re-ID keeps IDs through short occlusions (~4 s) but does not recognise a person who comes back somewhere else.
-- The official `sam2` package has no streaming video API, so `sam2` prompts the image predictor with the previous box each
-  frame (no memory); a sam2 build with `build_sam2_camera_predictor` is used automatically when installed.
+- `sam2` runs SAM 2's video model one frame at a time (`track_step`) with a small memory: the prompt frame, the two
+  latest re-anchor frames and the last 16 frames. SAM 2's own object score says when the object is out of view. A
+  detector box of the same class confirms the object and re-prompts SAM 2 when they disagree (at most every 10 frames).
+  The object is dropped after 30 frames out of view or 50 frames without a confirming detection (`SAM2_MAX_LOST`,
+  `SAM2_MAX_UNANCHORED`, `SAM2_REANCHOR`); with a class to follow it then restarts on the next detection of that class.
+- Measured on the 98 s test video from the Go2 (laptop RTX GPU, against reference boxes): following "suitcase" with
+  Florence-2 + SAM 2 went from F1 0.46 (image predictor, on the wrong object in 198 frames) to 0.89 (video memory,
+  16 frames), at the same ~20 ms per frame. "Standing person" went from 0.11 to 0.64.
+- Closed-set detectors only know their classes: with YOLOv5, "sitting person" can only be found as "person" (Florence-2
+  or YOLOE pick the posture; the class re-acquire then stays off because the phrase is not a class).
 - YOLOE runs in PyTorch (a TensorRT export would fix its classes). With `yoloe` the indoor ignore list is not applied.
 - A box selection is matched against the tracks of the frame closest to its time stamp (the service keeps 5 s), so a
   Florence-2 box from a few seconds earlier still picks the right track.

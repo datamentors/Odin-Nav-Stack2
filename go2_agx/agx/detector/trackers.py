@@ -18,10 +18,9 @@ Two kinds (trk.prompted):
   iou           greedy IoU association per class, no dependencies (default for tracking)
   botsort       BoT-SORT with camera-motion compensation (BoxMOT, AGPL-3.0: check before product use)
   botsort_reid  BoT-SORT + OSNet x0.25 appearance embeddings (TensorRT engine from export_reid.py)
-  sam2          SAM 2.1 (tiny by default) on a box prompt. Its cost is set by SAM2_IMAGE_SIZE (default 512, the size SAM 2
-                works at whatever image it gets; 384 or 256 run faster with coarser masks) and SAM2_MODEL (tiny | small). Uses the streaming "camera predictor" when the installed
-                sam2 package has it (build_sam2_camera_predictor), otherwise the official image predictor with the
-                previous box as prompt (no memory: may drift in crowds; the target is dropped when the mask is lost)
+  sam2          SAM 2.1 (tiny by default) on a box prompt, with its video memory (SAM2_MODE=video, default). Its cost is set
+                by SAM2_IMAGE_SIZE (default 512, the size SAM 2 works at whatever image it gets) and SAM2_MODEL
+                (tiny | small). Detector boxes of the same class confirm and re-anchor it; see SAM2Tracker
 
 Ported from the detector benchmark (go2_rf_detr_bench branch: detbench/reid_track.py, sam2_track.py).
 """
@@ -116,12 +115,17 @@ class BotSortTracker(Tracker):
     name = "botsort"
     det_conf = 0.1
 
-    def __init__(self, reid=False, lost_frames=40, reid_weights=None):
+    def __init__(self, reid=False, lost_frames=40, reid_weights=None, high=None, new=None):
         from boxmot import BotSort
         from boxmot.trackers.botsort.config import BotSortConfig
         self.name = "botsort_reid" if reid else "botsort"
-        self._make = lambda: BotSort(BotSortConfig(use_embeddings=reid, max_lost_frames=lost_frames),
-                                     reid=self._reid_cfg(reid_weights) if reid else None)
+        # BoxMOT's defaults (first association and new tracks from 0.62) are tuned for pedestrian benchmarks: here a
+        # suitcase or a far chair often scores 0.3-0.6 and would never get a track. Keep them near the service threshold.
+        high = float(high if high is not None else os.environ.get("BOTSORT_HIGH", "0.3"))
+        new = float(new if new is not None else os.environ.get("BOTSORT_NEW", "0.35"))
+        cfg = BotSortConfig(use_embeddings=reid, max_lost_frames=lost_frames, track_high_thresh=high,
+                            new_track_thresh=new, det_thresh=min(high, 0.3))
+        self._make = lambda: BotSort(cfg, reid=self._reid_cfg(reid_weights) if reid else None)
         self.reset()
 
     @staticmethod
@@ -154,36 +158,51 @@ class BotSortTracker(Tracker):
 
 
 class SAM2Tracker(Tracker):
-    """SAM 2.1 on a box prompt. One object at a time; start() again replaces it (new ID)."""
+    """SAM 2.1 on a box prompt. One object at a time; start() again replaces it (new ID).
+
+    Default (SAM2_MODE=video): the official video model run one frame at a time (track_step) with a small memory bank
+    (the prompt frame, the last re-anchor frames and the last few frames), so SAM 2 keeps the object's appearance across
+    frames and reports when it is not visible (object score). SAM2_MODE=image: the image predictor prompted with the last
+    box each frame (no memory, the earlier behaviour)."""
     name = "sam2"
     prompted = True
     keeps_frames = True
+    det_conf = 0.1   # low-score detector boxes still confirm / re-anchor the object
     CFG = {"tiny": ("configs/sam2.1/sam2.1_hiera_t.yaml", "sam2.1_hiera_tiny.pt"),
            "small": ("configs/sam2.1/sam2.1_hiera_s.yaml", "sam2.1_hiera_small.pt")}
+    MEAN, STD = np.array([0.485, 0.456, 0.406], np.float32), np.array([0.229, 0.224, 0.225], np.float32)
 
-    def __init__(self, model=None, image_size=None, max_lost=10, min_score=0.5, max_unanchored=30):
+    def __init__(self, model=None, image_size=None, mode=None, max_lost=None, max_unanchored=None, reanchor=None):
         import torch
         import sam2.build_sam as bs
         self.torch = torch
-        model = model or os.environ.get("SAM2_MODEL", "tiny")
-        image_size = int(image_size or os.environ.get("SAM2_IMAGE_SIZE", "512"))   # 512: ~4x less compute than 1024
+        env = os.environ.get
+        model = model or env("SAM2_MODEL", "tiny")
+        self.size = int(image_size or env("SAM2_IMAGE_SIZE", "512"))   # 512: ~4x less compute than 1024
+        self.mode = mode or env("SAM2_MODE", "video")
+        # frames without the object before the target is dropped (SAM 2's own visibility score, or a rejected mask)
+        self.max_lost = int(max_lost if max_lost is not None else env("SAM2_MAX_LOST", "30"))
+        # an object the detector knows must be confirmed by a detector box this often (frames), or it is dropped
+        self.max_unanchored = int(max_unanchored if max_unanchored is not None else env("SAM2_MAX_UNANCHORED", "50"))
+        # video mode: re-prompt with the detector's box at most every N frames when SAM 2's box drifts from it
+        self.reanchor = int(reanchor if reanchor is not None else env("SAM2_REANCHOR", "10"))
         cfg, ckpt = self.CFG[model]
-        ckpt = os.path.join(os.environ.get("SAM2_DIR", os.path.join(MODELS, "sam2")), ckpt)
+        ckpt = os.path.join(env("SAM2_DIR", os.path.join(MODELS, "sam2")), ckpt)
         if not os.path.exists(ckpt):
             raise RuntimeError("SAM 2 checkpoint %s missing: detector/get_models.sh sam2" % ckpt)
-        over = [] if image_size == 1024 else ["++model.image_size=%d" % image_size]
-        if hasattr(bs, "build_sam2_camera_predictor"):   # streaming predictor (memory across frames)
-            self.cam = bs.build_sam2_camera_predictor(cfg, ckpt, device="cuda", hydra_overrides_extra=over)
-            self.img_pred, mode = None, "camera predictor"
-        else:                                             # official package: image predictor, previous box as prompt
+        over = [] if self.size == 1024 else ["++model.image_size=%d" % self.size]
+        if self.mode == "video":
+            self.net = bs.build_sam2_video_predictor(cfg, ckpt, device="cuda", hydra_overrides_extra=over)
+            self.mean = torch.tensor(self.MEAN, device="cuda").view(1, 3, 1, 1)
+            self.std = torch.tensor(self.STD, device="cuda").view(1, 3, 1, 1)
+            kind = "video model, memory"
+        else:
             from sam2.sam2_image_predictor import SAM2ImagePredictor
-            self.cam = None
-            self.img_pred, mode = SAM2ImagePredictor(bs.build_sam2(cfg, ckpt, device="cuda", hydra_overrides_extra=over)), \
-                "image predictor, box propagation"
-            # the image predictor hard-codes the backbone feature sizes of a 1024 input: scale them to image_size
-            self.img_pred._bb_feat_sizes = [(image_size // k, image_size // k) for k in (4, 8, 16)]
-        self._desc = "SAM 2.1 %s @%d (%s)" % (model, image_size, mode)
-        self.max_lost, self.min_score, self.max_unanchored = max_lost, min_score, max_unanchored
+            self.img_pred = SAM2ImagePredictor(bs.build_sam2(cfg, ckpt, device="cuda", hydra_overrides_extra=over))
+            # the image predictor hard-codes the backbone feature sizes of a 1024 input: scale them to the size
+            self.img_pred._bb_feat_sizes = [(self.size // k, self.size // k) for k in (4, 8, 16)]
+            kind = "image predictor, box propagation"
+        self._desc = "SAM 2.1 %s @%d (%s)" % (model, self.size, kind)
         self.next_id = 0
         self.reset()
 
@@ -196,21 +215,54 @@ class SAM2Tracker(Tracker):
         return self.obj is not None
 
     def reset(self):
-        self.obj = None   # {"id", "box", "cls", "lost"}
+        self.obj = None   # {"id", "box", "cls", "lost", "free", "t", "last_anchor"}
+        self.mem = None   # video mode: {"cond_frame_outputs": {t: out}, "non_cond_frame_outputs": {t: out}}
 
     @contextlib.contextmanager
     def _ctx(self):
         with self.torch.inference_mode(), self.torch.autocast("cuda", dtype=self.torch.bfloat16):
             yield
 
+    # ---------------------------------------------------------------- video mode
+    def _features(self, img):
+        x = cv2.resize(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), (self.size, self.size), interpolation=cv2.INTER_LINEAR)
+        x = self.torch.from_numpy(x).cuda().permute(2, 0, 1)[None].float().div_(255.0)
+        _, feats, pos, sizes = self.net._prepare_backbone_features(self.net.forward_image((x - self.mean) / self.std))
+        return feats, pos, sizes
+
+    def _step(self, img, box=None, init=False):
+        """One frame through SAM 2 with the memory bank; box = a prompt (makes it a conditioning frame).
+        Returns (mask at the image size, object visible)."""
+        o, h, w = self.obj, img.shape[0], img.shape[1]
+        feats, pos, sizes = self._features(img)
+        pts = None
+        if box is not None:
+            k = self.torch.tensor([self.size / w, self.size / h], device="cuda")
+            xy = self.torch.tensor(np.asarray(box, np.float32).reshape(1, 2, 2), device="cuda") * k
+            pts = {"point_coords": xy, "point_labels": self.torch.tensor([[2, 3]], dtype=self.torch.int32, device="cuda")}
+        out = self.net.track_step(frame_idx=o["t"], is_init_cond_frame=init, current_vision_feats=feats,
+                                  current_vision_pos_embeds=pos, feat_sizes=sizes, point_inputs=pts, mask_inputs=None,
+                                  output_dict=self.mem, num_frames=1 << 30, run_mem_encoder=True)
+        keep = {k_: out[k_] for k_ in ("maskmem_features", "maskmem_pos_enc", "pred_masks", "obj_ptr", "object_score_logits")}
+        cond, non = self.mem["cond_frame_outputs"], self.mem["non_cond_frame_outputs"]
+        (cond if pts is not None else non)[o["t"]] = keep
+        while len(cond) > 3:   # the first prompt and the two latest re-anchors
+            del cond[sorted(cond)[1]]
+        for t in [t for t in non if t < o["t"] - 16]:   # the memory reads the last 6 frames, object pointers the last 15
+            del non[t]
+        visible = float(out["object_score_logits"].max()) > 0
+        m = self.torch.nn.functional.interpolate(out["pred_masks"].float(), (h, w), mode="bilinear", align_corners=False)
+        return (m[0, 0] > 0).cpu().numpy(), visible
+
+    # ---------------------------------------------------------------- common
     def start(self, img, box, cls=-1):
         self.next_id += 1
-        self.obj = {"id": self.next_id, "box": [float(v) for v in box], "cls": int(cls), "lost": 0, "free": 0}
-        if self.cam is not None:
+        self.obj = {"id": self.next_id, "box": [float(v) for v in box], "cls": int(cls), "lost": 0, "free": 0, "t": 0,
+                    "last_anchor": 0}
+        if self.mode == "video":
+            self.mem = {"cond_frame_outputs": {}, "non_cond_frame_outputs": {}}
             with self._ctx():
-                self.cam.load_first_frame(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-                self.cam.add_new_prompt(frame_idx=0, obj_id=1,
-                                        bbox=np.array([box[:2], box[2:]], np.float32))
+                self._step(img, box, init=True)
         return self.next_id
 
     @staticmethod
@@ -226,50 +278,59 @@ class SAM2Tracker(Tracker):
             return mask
         return lab == 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
 
+    def _detector_box(self, boxes, cls, ref, min_iou):
+        """The detector's box of the same class that overlaps ref most (IoU >= min_iou), or None."""
+        o = self.obj
+        if o["cls"] < 0 or not len(boxes):
+            return None, 0.0
+        same = np.flatnonzero(np.asarray(cls) == o["cls"])
+        if not len(same):
+            return None, 0.0
+        ious = iou_matrix(np.asarray(ref, np.float32)[None], np.asarray(boxes)[same])[0]
+        k = int(np.argmax(ious))
+        return (np.asarray(boxes)[same[k]], float(ious[k])) if ious[k] >= min_iou else (None, float(ious[k]))
+
     def update(self, img, boxes, scores, cls):
-        """Prompt SAM 2 with the previous box, or with the detector's box of the same object when there is one
-        (re-anchoring: stops the box from creeping onto the background). A mask that jumps away or changes size too
-        much is treated as lost; after max_lost lost frames the object is dropped (the service then clears the target)."""
+        """Follow the object one more frame. A detector box of the same object confirms it (and re-anchors SAM 2 when
+        they disagree); after max_lost frames without the object, or max_unanchored frames without a confirming detector
+        box (objects the detector knows), the object is dropped (the service then clears the target)."""
         none = np.full(len(boxes), -1, np.int64)
         o = self.obj
         if o is None:
             return none, []
-        prev = np.asarray(o["box"], np.float32)
-        prompt, anchored = prev, False
-        if o["cls"] >= 0 and len(boxes):
-            same = np.flatnonzero(np.asarray(cls) == o["cls"])
-            if len(same):
-                ious = iou_matrix(prev[None], np.asarray(boxes)[same])[0]
-                k = int(np.argmax(ious))
-                if ious[k] >= 0.3:
-                    prompt, anchored = np.asarray(boxes)[same[k]], True
-        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        o["t"] += 1
+        prev = o["box"]
         with self._ctx():
-            if self.cam is not None:   # (streaming predictor: keeps its own memory, prompt not used)
-                _, logits = self.cam.track(rgb)
-                mask = (logits[0, 0] > 0).cpu().numpy()
+            if self.mode == "video":
+                mask, ok = self._step(img)
                 score = 1.0
+                nb = self._mask_box(self._largest_component(mask)) if ok else None
+                det, iou = self._detector_box(boxes, cls, nb if nb else prev, 0.3)
+                if det is not None and iou < 0.75 and o["t"] - o["last_anchor"] >= self.reanchor:
+                    o["t"] += 1   # re-prompt on the detector's box (a new conditioning frame of the same image)
+                    o["last_anchor"] = o["t"]
+                    mask, ok = self._step(img, det)
+                    nb = self._mask_box(self._largest_component(mask)) if ok else None
+                anchored = det is not None
             else:
-                self.img_pred.set_image(rgb)
-                masks, sc, _ = self.img_pred.predict(box=prompt.astype(np.float32), multimask_output=False)
-                mask, score = masks[0] > 0, float(sc[0])
-        mask = self._largest_component(mask)
-        nb = self._mask_box(mask)
-        ok = nb is not None and score >= self.min_score
-        if ok and not anchored:   # plausibility against the last good box (an anchored box comes from the detector)
-            area = lambda b: max(1.0, (b[2] - b[0]) * (b[3] - b[1]))
-            ratio = area(nb) / area(prev)
-            ok = 0.4 <= ratio <= 2.5 and iou_matrix(prev[None], np.asarray([nb]))[0, 0] >= 0.3
-        # an object the detector knows (cls >= 0) must be confirmed by it now and then: SAM 2 alone slowly slides onto
-        # whatever is there once the object has left the view
+                det, _ = self._detector_box(boxes, cls, prev, 0.3)
+                anchored = det is not None
+                self.img_pred.set_image(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+                masks, sc, _ = self.img_pred.predict(box=np.asarray(det if anchored else prev, np.float32),
+                                                     multimask_output=False)
+                mask, score = self._largest_component(masks[0] > 0), float(sc[0])
+                nb = self._mask_box(mask) if score >= 0.5 else None
+                if nb is not None and not anchored:   # plausibility against the last good box
+                    area = lambda b: max(1.0, (b[2] - b[0]) * (b[3] - b[1]))
+                    ratio = area(nb) / area(prev)
+                    if not (0.4 <= ratio <= 2.5 and iou_matrix(np.asarray([prev]), np.asarray([nb]))[0, 0] >= 0.3):
+                        nb = None
         o["free"] = 0 if anchored else o["free"] + 1
-        if o["cls"] >= 0 and o["free"] > self.max_unanchored:
-            self.obj = None
+        if (o["cls"] >= 0 and o["free"] > self.max_unanchored) or (nb is None and o["lost"] + 1 > self.max_lost):
+            self.reset()
             return none, []
-        if not ok:
+        if nb is None:
             o["lost"] += 1
-            if o["lost"] > self.max_lost:
-                self.obj = None
             return none, []
         o.update(box=nb, lost=0)
         return none, [{"id": o["id"], "box": nb, "score": score, "cls": o["cls"], "mask": mask}]
