@@ -19,7 +19,7 @@ Every message has `kind`, `seq` (per kind) and `t_robot` (robot clock, unix seco
 - Florence: `/florence/objects_3d` is only published while `send on` is active in the Florence relay, so searches done with `send off` do not reach the cloud.
 - YOLO `bearing_deg`: positive = to the right of the camera axis. `distance_m` = horizontal distance in the camera frame.
 
-Tests (no ROS needed): `python3 tests/test_logic.py` (helpers in `cloud_logic.py`), and `python3 tests/test_examples.py` (needs `jsonschema`).
+Tests (no ROS needed): `python3 tests/test_logic.py` (helpers in `cloud_logic.py`); `python3 tests/test_examples.py` and `python3 tests/test_node.py` (need `jsonschema` and `pyyaml`). `test_node.py` runs the node with fake ROS modules and checks every message it publishes against its schema, topic and size.
 
 Run the node (inside the ons2-go2 container, ROS sourced, nav_interfaces built):
 `python3 cloud_publisher.py _config:=config/cloud_publisher.yaml`
