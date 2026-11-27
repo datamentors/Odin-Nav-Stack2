@@ -2,12 +2,12 @@
 # AGX ORIN. GPU object detector for ONS2 (replaces their CPU YOLOv5s detector on the Go2): a light detector + an optional
 # tracker, selectable. Two parts:
 #   1. GPU service detector/detector_service.py (127.0.0.1:8750, Odin-perception CUDA venv; container odin-gpu or host),
-#      process "yolosvc": the detector (YOLOv5l TensorRT/PyTorch or RF-DETR TensorRT) and the tracker
+#      process "yolosvc": the detector (YOLOv5l TensorRT/PyTorch, RF-DETR TensorRT or YOLOE open vocabulary) and the tracker
 #   2. ROS node detector/detector_node.py, process "yolo" in the container odin-agx (node /yolo_detector): publishes the
 #      upstream yolo_ros topics (/yolo_detections(_3d), /yolo_class_names, /yolo_debug_image) + /perception/objects (JSON, all
 #      results with track IDs and 3D) and /perception/target_3d
 #
-#   ~/odin_test/start_yolo_gpu_agx.sh [--detector yolov5|rfdetr] [--tracker none|iou|botsort|botsort_reid|sam2]
+#   ~/odin_test/start_yolo_gpu_agx.sh [--detector yolov5|rfdetr|yoloe] [--tracker none|iou|botsort|botsort_reid|sam2]
 #                                     [--weights PATH[,FALLBACK...]] [--conf 0.25]
 # Defaults come from ~/.config/go2_agx/detector.env (DETECTOR, TRACKER, DETECTOR_WEIGHTS, DETECTOR_CONF; see
 # go2_agx/detector.env.example), else YOLOv5l (TensorRT engine, PyTorch fallback) without tracker. Command-line options
@@ -47,9 +47,10 @@ svc_stop() {
 svc_up() { if gpu_in_container; then gpu_alive yolosvc; else pgrep -f "$SVC_PAT" >/dev/null; fi; }
 svc_stop
 ENVS="DETECTOR=$DETECTOR TRACKER=$TRACKER DETECTOR_WEIGHTS=${DETECTOR_WEIGHTS:-} DETECTOR_PORT=8750 PIP_NO_INDEX=1"
+export YOLOE_CLASSES=${YOLOE_CLASSES:-}   # may contain spaces: inherited in host mode, quoted for the container
 echo "Detector $DETECTOR, tracker $TRACKER${DETECTOR_WEIGHTS:+, weights $DETECTOR_WEIGHTS}"
 if gpu_in_container; then
-  gpu_start yolosvc "cd $DET && exec env $ENVS $(gpu_perc)/.venv/bin/python $DET/detector_service.py" \
+  gpu_start yolosvc "cd $DET && exec env $ENVS YOLOE_CLASSES='$YOLOE_CLASSES' $(gpu_perc)/.venv/bin/python $DET/detector_service.py" \
     || { echo "GPU service failed: tail $SVC_LOG"; exit 1; }
 else   # fully detached (own session, no fd shared with this script) so this script can always exit
   (cd $DET && exec env $ENVS setsid $HOME/odin-perception/.venv/bin/python $DET/detector_service.py > $SVC_LOG 2>&1 < /dev/null) &

@@ -4,7 +4,8 @@ Runs in the Odin-perception venv (Python 3.10, CUDA) in the container odin-gpu o
 (detector_node.py, Python 3.8, container odin-agx) sends it frames. Started by start_yolo_gpu_agx.sh (process yolosvc).
 
 Selection (environment variables, normally set by start_yolo_gpu_agx.sh from ~/.config/go2_agx/detector.env):
-  DETECTOR          yolov5 (default) | rfdetr                       see detectors.py
+  DETECTOR          yolov5 (default) | rfdetr | yoloe (open vocabulary)  see detectors.py
+  YOLOE_CLASSES     yoloe only: initial classes, comma separated (default: the 80 COCO classes)
   DETECTOR_WEIGHTS  path, or comma-separated fallbacks              default: detectors.default_weights()
   TRACKER           none (default) | iou | botsort | botsort_reid | sam2      see trackers.py
   DETECTOR_PORT     8750
@@ -12,10 +13,10 @@ Selection (environment variables, normally set by start_yolo_gpu_agx.sh from ~/.
 
 API. Images are raw BGR uint8 bytes with the header X-Shape: "h,w"; boxes are [x1, y1, x2, y2] in pixels of the image sent.
   GET  /health   "ok <detector> | <tracker> | <ms> ms/img (<n> images)"
-  GET  /info     {"detector", "tracker", "prompted", "input_size", "names": {"0": "person", ...}}
+  GET  /info     {"detector", "tracker", "prompted", "open_vocab", "names_version", "input_size", "names": {"0": "person", ...}}
   GET  /names    {"0": "person", ...}   (class id -> name, as the upstream /yolo_class_names)
   POST /detect?conf=0.25[&stamp=<s>][&track=0][&masks=1]
-       -> {"ms", "target": {"id", "visible"} | null,
+       -> {"ms", "names_version", "target": {"id", "visible"} | null,
            "objects": [{"box", "score", "cls", "name", "track_id" (null = not tracked), "target", "source",
                         "mask_index" (null = no mask)}],
            "mask_png": base64 PNG, only with masks=1}
@@ -29,6 +30,9 @@ API. Images are raw BGR uint8 bytes with the header X-Shape: "h,w"; boxes are [x
        {"name": "person"}                                      the most confident current track of that class
        {"track_id": <id>}  |  {"clear": true}
        -> {"ok", "target", "detail"}
+  POST /classes  JSON {"names": ["chair", "fire extinguisher"]} (replace), {"add": [...]}, {"remove": [...]}
+       open-vocabulary detectors only (yoloe). Class ids change, so the tracker and the target are reset.
+       -> {"ok", "names", "names_version", "detail"}
 """
 import base64
 import collections
@@ -58,13 +62,34 @@ class Pipeline:
         self.history = collections.deque()    # {"stamp", "objects" (tracked ones), "img" (prompted trackers only)}
         self.history_sec = history_sec
         self.target = None                    # {"id", "visible"}
+        self.names_version = 0                # bumped when an open-vocabulary detector gets new classes
         self.stats = {"n": 0, "ms": 0.0}
         print("Detector service: %s | tracker %s | loaded in %.1f s"
               % (self.det.desc, getattr(self.trk, "desc", self.tracker_name), time.time() - t0), flush=True)
 
     def info(self):
         return {"detector": self.det.desc, "tracker": self.tracker_name, "prompted": self.trk.prompted,
+                "open_vocab": self.det.open_vocab, "names_version": self.names_version,
                 "input_size": self.det.input_size, "names": {str(k): v for k, v in self.det.names.items()}}
+
+    def set_classes(self, req):
+        if not self.det.open_vocab:
+            return {"ok": False, "names": list(self.det.names.values()), "names_version": self.names_version,
+                    "detail": "%s has fixed classes (use DETECTOR=yoloe for text classes)" % self.det.desc}
+        cur = list(self.det.names.values())
+        if "names" in req:
+            new = list(req["names"])
+        else:
+            new = [n for n in cur if n not in set(req.get("remove", []))] + [n for n in req.get("add", []) if n not in cur]
+        t = time.time()
+        with self.lock:
+            names = self.det.set_classes(new)
+            self.trk.reset()                  # class ids changed meaning: old tracks and the target are void
+            self.target, self.history = None, collections.deque()
+            self.names_version += 1
+        names = list(names.values())
+        return {"ok": True, "names": names, "names_version": self.names_version,
+                "detail": "now looking for: %s (%.1f s)" % (", ".join(names), time.time() - t)}
 
     def health(self):
         return "ok %s | %s | %.0f ms/img (%d images)" % (self.det.desc, getattr(self.trk, "desc", self.tracker_name),
@@ -103,7 +128,7 @@ class Pipeline:
                 if self.target is not None:
                     self.target["visible"] = any(o["target"] for o in objs)
             target = dict(self.target) if self.target else None
-        res = {"target": target, "objects": objs}
+        res = {"names_version": self.names_version, "target": target, "objects": objs}
         label = np.zeros(img.shape[:2], np.uint8)
         for k, (o, m) in enumerate(zip(objs, mlist)):
             o["mask_index"] = None
@@ -215,6 +240,8 @@ def serve(pipe, port):
                                                        q.get("masks", "0") == "1"))
                 if u.path == "/target":
                     return self._send(200, pipe.select(json.loads(self._body() or b"{}")))
+                if u.path == "/classes":
+                    return self._send(200, pipe.set_classes(json.loads(self._body() or b"{}")))
                 self._send(404, {})
             except Exception as e:   # never kill the service on one bad request
                 self._send(500, {"error": "%s: %s" % (type(e).__name__, e)})

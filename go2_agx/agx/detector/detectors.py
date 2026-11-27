@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """Light per-frame object detectors for the GPU detector service (detector_service.py), one interface for all:
 
-    det = make_detector("yolov5" | "rfdetr", weights)
+    det = make_detector("yolov5" | "rfdetr" | "yoloe", weights)
     boxes, scores, cls = det.detect(img_bgr, conf)     # boxes N x 4 (x1, y1, x2, y2) in img pixels, scores N, cls N (int)
                                                        # a segmentation model may return a 4th item: masks N x h x w (bool)
     det.names        {cls id: name}
     det.input_size   longest side the model works at (the ROS node sends images about that size, not the 1600 px original)
     det.desc         one line for logs / /health
+    det.open_vocab   True when det.set_classes(["chair", "fire extinguisher", ...]) can change what it looks for (YOLOE)
 
 Backends, chosen by the weights file extension:
     yolov5  .engine  TensorRT (FP16 engine from yolo_trt/build_engine.sh)
             .pt      PyTorch on the GPU (needs the yolov5 repo: ~/odin_test/yolo_gpu/yolov5, or $YOLOV5_DIR)
-    rfdetr  .engine  TensorRT (FP16 engine from detector/build_rfdetr_engine.sh, fixed square input)
+    rfdetr  .engine  TensorRT (FP16 engine from detector/get_models.sh rfdetr, fixed square input)
             .onnx    onnxruntime on the CPU (slow; for tests)
+    yoloe   .pt      YOLOE (Ultralytics, open vocabulary, with instance masks): any text classes, changeable at run
+                     time (set_classes, ~0.5 s each; the text encoder mobileclip_blt.ts must be next to the weights).
+                     A "-pf" (prompt-free) model uses its built-in vocabulary. Needs ultralytics (image WITH_YOLOE=1).
 
 Runs in the Odin-perception venv (Python 3.10, Jetson torch, JetPack TensorRT); nothing here needs ROS.
 Ported from the detector benchmark (go2_rf_detr_bench branch, detbench/bench.py) without the benchmark parts.
@@ -95,10 +99,13 @@ def letterbox(img, size=640, stride=32, color=(114, 114, 114)):
 
 
 class Detector:
-    names, input_size, desc = {}, 640, ""
+    names, input_size, desc, open_vocab = {}, 640, "", False
 
     def detect(self, img, conf):
         raise NotImplementedError
+
+    def set_classes(self, names):
+        raise NotImplementedError("%s has a fixed set of classes" % self.desc)
 
 
 class YOLOv5(Detector):
@@ -216,7 +223,63 @@ class RFDETR(Detector):
         return boxes.reshape(-1, 4)[keep].astype(np.float32), flat[idx][keep].astype(np.float32), c[keep].astype(np.int64)
 
 
-DETECTORS = {"yolov5": YOLOv5, "rfdetr": RFDETR}
+class YOLOE(Detector):
+    """YOLOE segmentation model (Ultralytics) prompted with text classes. Returns boxes, scores, class ids and masks
+    (at the size of the image given). Classes from YOLOE_CLASSES (comma separated) or COCO by default."""
+    open_vocab = True
+
+    def __init__(self, weights, classes=None):
+        os.environ.setdefault("YOLO_AUTOINSTALL", "false")   # never pip-install from this process
+        os.environ.setdefault("YOLO_OFFLINE", "true")        # never download: models come from get_models.sh
+        os.environ.setdefault("YOLO_CONFIG_DIR", os.path.join(os.path.dirname(weights), ".ultralytics"))
+        import threading
+        import torch
+        from ultralytics import YOLOE as _YOLOE
+        self.lock = threading.Lock()   # set_classes and predict must not overlap
+        self.half = torch.cuda.is_available()
+        self.dir = os.path.dirname(os.path.abspath(weights))
+        self.m = _YOLOE(weights)
+        self.prompt_free = "-pf" in os.path.basename(weights)
+        self.input_size = int(os.environ.get("YOLOE_IMGSZ", "640"))
+        self.desc = "YOLOE %s (PyTorch%s)" % (os.path.basename(weights), " FP16" if self.half else "")
+        if self.prompt_free:
+            self.open_vocab = False
+            self.names = {int(k): str(v) for k, v in self.m.names.items()}
+        else:
+            env = os.environ.get("YOLOE_CLASSES", "")
+            self.set_classes(classes or [c.strip() for c in env.split(",") if c.strip()] or COCO80)
+        self._warm()
+
+    def _warm(self):   # first predict at the live size (518 x 640 for the 1296 x 1600 camera) is slow: do it now
+        self.detect(np.zeros((int(self.input_size * 1296 / 1600), self.input_size, 3), np.uint8), 0.5)
+
+    def set_classes(self, names):
+        if self.prompt_free:
+            raise NotImplementedError("a prompt-free YOLOE model has a fixed vocabulary")
+        names = [str(n).strip() for n in names if str(n).strip()]
+        if not names:
+            raise ValueError("no class names")
+        cwd = os.getcwd()
+        with self.lock:
+            os.chdir(self.dir)   # Ultralytics finds the text encoder (mobileclip_blt.ts) in the working directory
+            try:
+                self.m.set_classes(names, self.m.get_text_pe(names))
+            finally:
+                os.chdir(cwd)
+            self.names = {i: n for i, n in enumerate(names)}
+        self._warm()
+        return self.names
+
+    def detect(self, img, conf):
+        with self.lock:
+            r = self.m.predict(img, conf=conf, imgsz=self.input_size, half=self.half, retina_masks=True, verbose=False)[0]
+        b = r.boxes
+        boxes, scores, cls = b.xyxy.cpu().numpy(), b.conf.cpu().numpy(), b.cls.cpu().numpy().astype(np.int64)
+        masks = r.masks.data.cpu().numpy().astype(bool) if r.masks is not None else [None] * len(boxes)
+        return boxes.astype(np.float32), scores.astype(np.float32), cls, masks
+
+
+DETECTORS = {"yolov5": YOLOv5, "rfdetr": RFDETR, "yoloe": YOLOE}
 
 
 def default_weights(kind):
@@ -227,6 +290,10 @@ def default_weights(kind):
     if kind == "rfdetr":
         return [os.path.join(HOME, "odin_test/models/rfdetr_large_fp16.engine"),
                 os.path.join(HOME, "odin_test/models/rfdetr_medium_fp16.engine")]
+    if kind == "yoloe":
+        return [os.path.join(HOME, "odin_test/models/yoloe-11l-seg.pt"),
+                os.path.join(HOME, "odin_test/models/yoloe-11m-seg.pt"),
+                os.path.join(HOME, "odin_test/models/yoloe-11s-seg.pt")]
     raise ValueError("unknown detector %r (choose from %s)" % (kind, ", ".join(DETECTORS)))
 
 

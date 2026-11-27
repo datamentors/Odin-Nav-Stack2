@@ -5,6 +5,7 @@
 #   ~/odin_test/detector/get_models.sh rfdetr [medium|large ...]   RF-DETR -> ONNX (throwaway venv, CPU) -> FP16 engine (default: large)
 #   ~/odin_test/detector/get_models.sh reid                        OSNet x0.25 Re-ID -> FP16 engine (tracker botsort_reid; image with WITH_TRACKERS=1)
 #   ~/odin_test/detector/get_models.sh sam2 [tiny|small]           SAM 2.1 checkpoint (tracker sam2; image with WITH_TRACKERS=1)
+#   ~/odin_test/detector/get_models.sh yoloe [11s|11m|11l|11l-pf]  YOLOE weights + its text encoder (DETECTOR=yoloe; image with WITH_YOLOE=1)
 set -euo pipefail
 D=$HOME/odin_test; . $D/agx_lib.sh
 M=${ODIN_MODELS:-$D/models}; mkdir -p $M
@@ -41,6 +42,16 @@ case "${1:-}" in
       mv $M/sam2/$f.part $M/sam2/$f
     fi
     echo "OK $M/sam2/$f" ;;
-  *) sed -n 2,8p "$0"; exit 1 ;;
+  yoloe)
+    v=${2:-11l}; A=https://github.com/ultralytics/assets/releases/download/v8.4.0
+    case $v in
+      11l-pf) files="yoloe-11l-seg-pf.pt" ;;                 # prompt-free: built-in vocabulary, no text encoder
+      *)      files="yoloe-$v-seg.pt mobileclip_blt.ts" ;;   # text prompts: the encoder must sit next to the weights
+    esac
+    for f in $files; do
+      if [ ! -f $M/$f ]; then curl -fL --retry 3 -o $M/$f.part $A/$f && mv $M/$f.part $M/$f; fi
+      echo "OK $M/$f"
+    done ;;
+  *) sed -n 2,9p "$0"; exit 1 ;;
 esac
 own 2>/dev/null || true

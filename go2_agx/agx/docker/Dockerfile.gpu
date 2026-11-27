@@ -43,6 +43,20 @@ RUN if [ "$WITH_TRACKERS" = 1 ]; then \
    && SAM2_BUILD_CUDA=0 $P install --no-cache-dir --no-build-isolation --no-deps git+https://github.com/facebookresearch/sam2.git@$SAM2_COMMIT \
    && /opt/odin-perception/.venv/bin/python -c "import boxmot, sam2; print('trackers OK')" ; fi
 LABEL odin.trackers=$WITH_TRACKERS
+# Optional open-vocabulary detector YOLOE (Ultralytics, AGPL-3.0) for the detector service (DETECTOR=yoloe), same rules:
+#   docker build --build-arg WITH_YOLOE=1 ...      (models: detector/get_models.sh yoloe)
+# Ultralytics without its dependencies (it would pull opencv-python next to the headless one), plus what it imports, plus
+# its CLIP tokenizer (for the text prompts) pinned. The service also sets YOLO_AUTOINSTALL=false and YOLO_OFFLINE=true.
+ARG WITH_YOLOE=0
+ARG ULTRALYTICS_VERSION=8.4.220
+ARG ULTRALYTICS_CLIP_COMMIT=7ffa84b3bfa40c42ecc1c77147a855e69cb2dd40
+RUN if [ "$WITH_YOLOE" = 1 ]; then \
+      P=/opt/odin-perception/.venv/bin/pip && $P freeze > /tmp/constraints.txt \
+   && $P install --no-cache-dir --no-deps ultralytics==$ULTRALYTICS_VERSION "ultralytics-thop>=2.2.4" \
+   && $P install --no-cache-dir -c /tmp/constraints.txt matplotlib psutil polars scipy ftfy \
+   && $P install --no-cache-dir --no-deps git+https://github.com/ultralytics/CLIP.git@$ULTRALYTICS_CLIP_COMMIT \
+   && YOLO_OFFLINE=true /opt/odin-perception/.venv/bin/python -c "from ultralytics import YOLOE; import clip; print('YOLOE OK')" ; fi
+LABEL odin.yoloe=$WITH_YOLOE
 ENV PYTHONUNBUFFERED=1 NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=all HF_HUB_OFFLINE=1 ODIN_PERCEPTION=/opt/odin-perception
 LABEL odin.perception=baked
 CMD ["sleep","infinity"]

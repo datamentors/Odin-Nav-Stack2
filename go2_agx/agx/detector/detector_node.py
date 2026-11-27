@@ -10,6 +10,8 @@ Inputs
   ~rgb_topic   /odin1/image/undistorted (Image, or CompressedImage if the name ends in /compressed)
   ~depth_topic /odin1/depth_img_competetion (pcd2depth: lidar projected into the same image)
   /yolo/set_conf             std_msgs/Float32   confidence threshold, live
+  /perception/query          std_msgs/String    open-vocabulary detector (yoloe) only: what to look for, e.g.
+        "chair, fire extinguisher" (replace), "+backpack" (add), "-chair" (remove); resets tracks and target
   /perception/target/select  std_msgs/String    JSON, one of (boxes in full-resolution pixels):
         {"box": [x1, y1, x2, y2], "stamp": <s>, "name": "chair"}   e.g. a Florence-2 box (Florence command "track N")
         {"name": "person"}   {"track_id": 3}   {"clear": true}
@@ -30,6 +32,8 @@ Outputs, /perception/* (the complete set; topics nobody subscribes to cost nothi
                                         distance and the target in red
   /perception/target_3d      geometry_msgs/PointStamped   the target's 3D point, when it is seen with depth
   /perception/target/status  std_msgs/String (latched)    result of the last selection (JSON)
+  /perception/query/status   std_msgs/String (latched)    result of the last query (JSON: ok, names, detail)
+  (/perception/class_names and /yolo_class_names are re-published when the query changes the classes)
 Outputs, upstream yolo_ros topics (detector objects only; ~publish_yolo_topics, default true), so object_query_node,
 yolo_cmd_bridge and the Foxglove layout keep working:
   /yolo_detections, /yolo_detections_3d (only frames with a 3D object, upstream behaviour), /yolo_class_names,
@@ -38,7 +42,8 @@ yolo_cmd_bridge and the Foxglove layout keep working:
 3D outputs use the camera image's frame_id (or ~camera_frame when empty); x right, y down, z forward.
 
 Params: ~service_url (http://127.0.0.1:8750), ~conf_thres (0.25), ~camera_frame (camera_link), ~calib_file
-(/calib.yaml), ~depth_percentile (20), ~ignore_classes (comma separated, never reported unless it is the target),
+(/calib.yaml), ~depth_percentile (20), ~ignore_classes (comma separated, never reported unless it is the target;
+not applied to an open-vocabulary detector, whose classes are chosen with /perception/query),
 ~publish_yolo_topics (true).
 """
 import base64
@@ -112,14 +117,17 @@ class DetectorNode:
         self.pub_dbg_c = pub("/perception/debug_image/compressed", CompressedImage)
         self.pub_target = pub("/perception/target_3d", PointStamped)
         self.pub_status = pub("/perception/target/status", String, True)
-        pub("/perception/class_names", String, True).publish(names)
+        self.pub_query = pub("/perception/query/status", String, True)
+        self.pub_names = [pub("/perception/class_names", String, True)]
         self.pub_console = pub("/yolo/console", String, True)
         if self.yolo_topics:
             self.y2d = pub("/yolo_detections", Detection2DArray)
             self.y3d = pub("/yolo_detections_3d", Detection3DArray)
             self.ydbg = pub("/yolo_debug_image", Image)
             self.ydbg_c = pub("/yolo_debug_image/compressed", CompressedImage)
-            pub("/yolo_class_names", String, True).publish(names)
+            self.pub_names.append(pub("/yolo_class_names", String, True))
+        for p_ in self.pub_names:
+            p_.publish(names)
 
         self.depth = collections.deque(maxlen=25)   # (stamp s, msg): ~5-10 s of lidar depth images
         self.scale = 1.0                             # image sent to the service = full image * scale
@@ -131,6 +139,7 @@ class DetectorNode:
                          lambda m: self.depth.append((m.header.stamp.to_sec(), m)), queue_size=2, buff_size=2 ** 25)
         rospy.Subscriber("/yolo/set_conf", Float32, self._on_conf)
         rospy.Subscriber("/perception/target/select", String, self._on_select)
+        rospy.Subscriber("/perception/query", String, self._on_query)
         threading.Thread(target=self._worker, name="detector_worker", daemon=True).start()
         rospy.loginfo("[detector] %s | tracker %s | initialized with %d classes, input %d px"
                       % (self.info["detector"], self.info["tracker"], len(self.names), self.info["input_size"]))
@@ -160,6 +169,27 @@ class DetectorNode:
             res = {"ok": False, "target": None, "detail": "selection failed: %s" % e}
         self.pub_status.publish(String(data=json.dumps(res)))
         self.pub_console.publish(String(data="[detector] target: " + res.get("detail", "")))
+
+    def _on_query(self, m):
+        """'chair, fire extinguisher' replaces the classes, '+x, y' adds, '-x' removes (open-vocabulary detector)."""
+        q = (m.data or "").strip()
+        words = lambda t: [w.strip() for w in t.split(",") if w.strip()]
+        req = {"add": words(q[1:])} if q.startswith("+") else {"remove": words(q[1:])} if q.startswith("-") else {"names": words(q)}
+        try:
+            res = self.svc.post("/classes", json.dumps(req).encode(), {"Content-Type": "application/json"}, timeout=60)
+            if res.get("ok"):
+                self._refresh_names()
+        except Exception as e:
+            res = {"ok": False, "detail": "query failed: %s" % e}
+        self.pub_query.publish(String(data=json.dumps(res)))
+        self.pub_console.publish(String(data="[detector] " + res.get("detail", "")))
+
+    def _refresh_names(self):
+        self.info = self.svc.get("/info")
+        self.names = {int(k): v for k, v in self.info["names"].items()}
+        msg = String(data=json.dumps({str(k): v for k, v in self.names.items()}))
+        for p_ in self.pub_names:
+            p_.publish(msg)
 
     def _depth_at(self, stamp, shape):
         items = list(self.depth)
@@ -206,11 +236,13 @@ class DetectorNode:
         except Exception as e:
             rospy.logwarn_throttle(5, "[detector] request to %s failed: %s" % (self.svc.url, e))
             return
+        if res.get("names_version", 0) != self.info.get("names_version", 0):
+            self._refresh_names()   # classes changed (a query from another client)
         depth = self._depth_at(stamp, (H, W))
         frame_id = msg.header.frame_id or self.camera_frame
         objs = []
         for o in res["objects"]:
-            if o["name"].lower() in self.ignore and not o["target"]:
+            if o["name"].lower() in self.ignore and not o["target"] and not self.info.get("open_vocab"):
                 continue
             o = dict(o, box=[round(v / s, 1) for v in o["box"]], xyz=None, size=None)   # full-resolution px
             p = depth3d.box_to_3d(self.K, depth, o["box"], self.percentile) if depth is not None else None

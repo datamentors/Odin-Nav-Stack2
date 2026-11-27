@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # OUR helper (not ONS2 upstream): Foxglove control of THEIR yolo_ros + "go to" / "follow" an object.
 #   /yolo/command (std_msgs/String):
+#     find chair, fire extinguisher | find +backpack | find -chair
+#                 -> open-vocabulary GPU detector (DETECTOR=yoloe): what to look for (/perception/query); the
+#                    objects then appear in "list" with "go N" / "follow N" as for any detector
+#     track N | track person | untrack
+#                 -> the GPU detector's tracker follows object #N of the last "list" (its box), the most confident
+#                    track of a class, or nothing (/perception/target/select)
 #     list | classes | chair | move to the front of the chair ...  -> typed into THEIR object_query_node (tmux "yolo")
 #     go N        -> walk to object #N of the last "list" (stops STANDOFF_GO m in front of it, facing it)
 #     follow N    -> follow object #N (e.g. a person) with THEIR mission_manager dynamic mode
@@ -62,6 +68,7 @@ ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 NOISE = ("Ultralytics Settings", "yolo settings", "docs.ultralytics.com")
 
 names, last3d = {}, {"msg": None, "t": 0.0}   # t = arrival time (local clock)
+perception = {"last": None}            # last /perception/objects (GPU detector: 2D boxes + time stamp, for "track N")
 numbered = []                          # last "list": [{n, cls, conf, mx, my, dist, side}]
 follow = {"on": False, "cls": None, "x": 0.0, "y": 0.0, "seen": 0.0, "searching": False, "moving": False,
           "locked": False, "turning": False, "turned_at": 0.0, "prev": None, "cmd_at": 0.0}
@@ -145,7 +152,7 @@ def objects(tfb, only=None, max_age=None):
         dist = math.hypot(p.x, p.z)
         ang = math.degrees(math.atan2(p.x, p.z))
         side = "ahead" if abs(ang) < 10 else "%d deg %s" % (abs(ang), "right" if ang > 0 else "left")
-        o = {"cls": cls, "conf": h.score, "dist": dist, "side": side, "nodepth": False}
+        o = {"cls": cls, "conf": h.score, "dist": dist, "side": side, "nodepth": False, "cam": (p.x, p.y, p.z)}
         try:
             o["mx"], o["my"] = to_map(tfb, frame, p.x, p.y, p.z, stamp)   # OUR: TF of the photo's time
         except Exception:
@@ -288,6 +295,9 @@ def main():
     mk_pub = rospy.Publisher("/object_markers", MarkerArray, queue_size=1)
     flo_cmd_pub = rospy.Publisher("/florence/command", String, queue_size=1)
     goal_mk_pub = rospy.Publisher("/navigation_goal_marker", Marker, queue_size=1)
+    query_pub = rospy.Publisher("/perception/query", String, queue_size=1)
+    rospy.Subscriber("/perception/objects", String, lambda m: perception.update(last=json.loads(m.data)), queue_size=1)
+    select_pub = rospy.Publisher("/perception/target/select", String, queue_size=1)
 
     def on_florence(m):
         try:
@@ -577,6 +587,32 @@ def main():
                 return
             if low in ("reset", "clear", "reset all", "cancel all", "clear all"):
                 reset_all(cmd)
+                return
+            if parts[0] == "find" and len(parts) > 1:   # open-vocabulary detector: answer on /yolo/console
+                query_pub.publish(String(data=cmd.split(None, 1)[1]))
+                say("> %s\nAsked the detector to look for: %s (works with DETECTOR=yoloe)" % (cmd, cmd.split(None, 1)[1]))
+                return
+            if parts[0] in ("track", "untrack"):
+                if parts[0] == "untrack":
+                    select_pub.publish(String(data=json.dumps({"clear": True})))
+                    say("> %s\nTracking target cleared." % cmd)
+                elif len(parts) == 2 and parts[1].isdigit():
+                    # "list" numbers come from /yolo_detections_3d (no 2D box): find the same object in the GPU
+                    # detector's /perception/objects by class and camera-frame position, and send its box + stamp
+                    o = next((x for x in numbered if x["n"] == int(parts[1])), None)
+                    po = perception["last"]
+                    cands = [q for q in (po or {}).get("objects", []) if o and q["xyz"] and q["name"] == o["cls"]]
+                    best = min(cands, key=lambda q: math.dist(q["xyz"], o["cam"])) if cands else None
+                    if o is None:
+                        say("> %s\nNo #%s in the last 'list'." % (cmd, parts[1]))
+                    elif best is None or math.dist(best["xyz"], o["cam"]) > 0.5:
+                        say("> %s\n#%s is not in the GPU detector's output (needs start_yolo_gpu_agx.sh with a tracker)." % (cmd, parts[1]))
+                    else:
+                        select_pub.publish(String(data=json.dumps({"box": best["box"], "stamp": po["stamp"], "name": o["cls"]})))
+                        say("> %s\nAsked the tracker to follow #%s %s (answer on this console)." % (cmd, parts[1], o["cls"]))
+                elif len(parts) >= 2:
+                    select_pub.publish(String(data=json.dumps({"name": cmd.split(None, 1)[1]})))
+                    say("> %s\nAsked the tracker to follow the most confident %s." % (cmd, cmd.split(None, 1)[1]))
                 return
             if low in ("forget", "forget florence", "clear florence"):
                 n = len(flo["objs"]); flo["objs"] = []

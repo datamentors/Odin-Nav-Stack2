@@ -2,7 +2,7 @@
 
 This branch adapts **Odin Navigation Stack 2 (ONS2)** to a Unitree Go2 where the Odin1 sensor and the
 perception models run on an external **NVIDIA Jetson AGX Orin**, while navigation runs on the Go2's own computer.
-It adds a GPU object detector (YOLOv5l or RF-DETR with TensorRT, optional tracker, §5.1), open-vocabulary search with Florence-2, "go to" / "follow" commands from Foxglove,
+It adds a GPU object detector (YOLOv5l, RF-DETR or open-vocabulary YOLOE, optional tracker, §5.1), open-vocabulary search with Florence-2, "go to" / "follow" commands from Foxglove,
 extra safety limits for walking among people, and automatic recovery of the sensor pipeline.
 
 Everything upstream keeps working: the changes are a new robot profile, new scripts and launch files, and one
@@ -91,6 +91,8 @@ A copy of `robots/go2/` with:
 | `go 2` | Walk to object #2 and stop in front of it, facing it |
 | `follow 1` | Follow object #1 (e.g. a person) using the mission manager's dynamic mode |
 | `go F1` | Walk to object F1 found by Florence-2 |
+| `find chair, fire extinguisher` · `find +backpack` · `find -chair` | What the open-vocabulary detector looks for (`DETECTOR=yoloe`, §5.1) |
+| `track 2` · `track person` · `untrack` | The GPU detector's tracker follows object #2 of `list`, the most confident person, or nothing (§5.1) |
 | `go F1 3 F2 wait 5` | One mission with several stops in that order, waiting at each |
 | `stop` | Stop everything that moves the robot (follow, mission, NeuPAN, turns); keeps the lists |
 | `reset` / `clear` | Stop, and also clear what could be reused later: the latched last route, object numbers, Florence objects and markers |
@@ -178,6 +180,7 @@ too), or for one start: `start_yolo_gpu_agx.sh --detector rfdetr --tracker botso
 |---|---|---|---|
 | `yolov5` (default) | YOLOv5l, COCO | `~/odin_test/yolo_trt/yolov5l_fp16.engine`, then `yolov5l.pt` (PyTorch) | 55 ms (18 FPS); 80 ms with Florence-2 busy |
 | `rfdetr` | RF-DETR Large / Medium, COCO (Apache-2.0) | `~/odin_test/models/rfdetr_large_fp16.engine`, then `rfdetr_medium_fp16.engine` | Large 42 ms (24 FPS), Medium 32 ms (32 FPS); 80 / 60 ms with Florence-2 busy |
+| `yoloe` | YOLOE-11 seg (Ultralytics, AGPL-3.0): **open vocabulary** (any words) **with instance masks** | `~/odin_test/models/yoloe-11l-seg.pt`, then `-11m-`, `-11s-` (+ `mobileclip_blt.ts` next to them) | not measured on the Orin yet (11s on a laptop RTX GPU: 6 ms per frame; a class change ~1.5 s including the warm-up) |
 
 | `TRACKER` | What | Needs | Measured |
 |---|---|---|---|
@@ -193,13 +196,23 @@ view; Re-ID does not recognise a person who comes back somewhere else. The offic
 API, so `sam2` here prompts the image predictor with the previous box each frame (no memory); a sam2 build that provides
 `build_sam2_camera_predictor` (streaming, with memory) is used automatically when installed.
 
+**YOLOE next to Florence-2.** Both can run at the same time on the GPU and complement each other: Florence-2 is the slow,
+on-demand search (~1 s per photo, any phrase, a better open-vocabulary detector); YOLOE runs on every frame (~10 Hz) for the
+words it is given, with masks, IDs from the tracker and 3D, so it can follow an object. Set what YOLOE looks for with
+`find chair, fire extinguisher` in the YOLO panel (or `/perception/query`; `find +backpack` adds, `find -chair` removes); its
+objects then show in `list` and work with `go N`, `follow N` and `track N`. The classes start from `YOLOE_CLASSES` in
+`detector.env` (default COCO). A class change resets the tracker. The `-pf` (prompt-free) model has a fixed built-in vocabulary.
+PyTorch only for now (an Ultralytics TensorRT export would fix the classes).
+
 **Models.** YOLOv5l: `yolo_trt/get_weights.sh` + `yolo_trt/build_engine.sh` (as before). Others, into `~/odin_test/models/`
 (engines are built inside `odin-gpu` and only load with that TensorRT version; robot idle):
 ```bash
 ~/odin_test/detector/get_models.sh rfdetr large     # RF-DETR -> ONNX (throwaway venv, CPU) -> FP16 engine, 5-10 min
 ~/odin_test/detector/get_models.sh reid             # OSNet Re-ID engine for botsort_reid
 ~/odin_test/detector/get_models.sh sam2 tiny        # SAM 2.1 checkpoint
+~/odin_test/detector/get_models.sh yoloe 11l        # YOLOE weights + text encoder (11s / 11m / 11l / 11l-pf)
 ```
+YOLOE needs Ultralytics in the image: `WITH_YOLOE=1 ./go2_agx/build_images.sh --force` (pinned, without changing the venv).
 BoT-SORT and SAM 2 need their Python packages in the image: `WITH_TRACKERS=1 ./go2_agx/build_images.sh --force`
 (or `docker build --build-arg WITH_TRACKERS=1 ...`). They are added to the Odin-perception venv without changing any
 package already in it. BoxMOT (BoT-SORT) is AGPL-3.0: check before using it in a product.
@@ -211,6 +224,7 @@ package already in it. BoxMOT (BoT-SORT) is AGPL-3.0: check before using it in a
 | in | `/odin1/image/undistorted` | `sensor_msgs/Image` | camera frames (newest only; the debug image and masks are at this resolution) |
 | in | `/odin1/depth_img_competetion` | `sensor_msgs/Image` | lidar depth in the same image, for 3D (closest in time) |
 | in | `/yolo/set_conf` | `std_msgs/Float32` | confidence threshold, live |
+| in | `/perception/query` | `std_msgs/String` | `yoloe` only: what to look for, `"chair, fire extinguisher"` (replace), `"+backpack"` (add), `"-chair"` (remove). The YOLO panel sends it with `find ...` |
 | in | `/perception/target/select` | `std_msgs/String` | JSON: `{"box": [x1,y1,x2,y2], "stamp": <s>, "name": "chair"}` (full-resolution px of the frame at `stamp`), `{"name": "person"}` (most confident current track of that class), `{"track_id": 3}` or `{"clear": true}`. The Florence-2 panel sends it with `track N` / `untrack` |
 | out | `/perception/objects` | `std_msgs/String` | JSON per frame, everything in one message: `stamp`, `frame_id`, `image_size`, `detector`, `tracker`, `target` (`{id, visible}` or null) and `objects`: `[{name, cls, score, box (px), track_id or null, target, source ("detector" or "sam2"), mask_index or null, xyz (m, camera frame) or null, size (m) or null}]` |
 | out | `/perception/detections` | `vision_msgs/Detection2DArray` | all objects, full-resolution px (`results[0].id` = class id, -1 = unknown) |
@@ -220,6 +234,7 @@ package already in it. BoxMOT (BoT-SORT) is AGPL-3.0: check before using it in a
 | out | `/perception/class_names` | `std_msgs/String` (latched) | `{class id: name}` of the running detector |
 | out | `/perception/target_3d` | `geometry_msgs/PointStamped` | the target's 3D point (camera frame), when seen with depth |
 | out | `/perception/target/status` | `std_msgs/String` (latched) | result of the last selection |
+| out | `/perception/query/status` | `std_msgs/String` (latched) | result of the last query (classes now searched); the class-name topics are re-published |
 | out | `/yolo_detections`, `/yolo_detections_3d`, `/yolo_class_names` | as upstream | the upstream `yolo_ros` topics, detector objects only; `/yolo_detections_3d` only on frames with a 3D object (param `~publish_yolo_topics`, default true) |
 | out | `/yolo_debug_image` (`/compressed`) | `sensor_msgs/(Compressed)Image` | the same debug image (compressed: 800 px wide, for Foxglove over Wi-Fi) |
 | out | `/yolo/console` | `std_msgs/String` | short answers (confidence, selection) |
@@ -227,9 +242,9 @@ package already in it. BoxMOT (BoT-SORT) is AGPL-3.0: check before using it in a
 `/perception/*` is the complete set; the `/yolo_*` topics stay so `object_query_node`, `yolo_cmd_bridge.py` and the Foxglove
 layout work unchanged with any detector (they never carry the SAM 2 object, whose class may be unknown). Images, masks and
 the debug overlay are only computed when someone subscribes. `vision_msgs` in ROS 1 has no track-ID field, so track IDs are
-in the JSON (and on the debug image). Masks come from SAM 2 today (the target only); YOLOv5 and RF-DETR are box detectors, so
-with them `/perception/masks` is all zeros. A segmentation detector can return masks as a 4th item of `detect()` and they
-appear in the same label image. Nothing in ONS2 follows `/perception/target_3d` yet.
+in the JSON (and on the debug image). Masks come from YOLOE (every object) and SAM 2 (its target); YOLOv5 and RF-DETR are box
+detectors, so with them `/perception/masks` is all zeros. With `yoloe` the indoor ignore list is not applied (you choose the
+classes). Nothing in ONS2 follows `/perception/target_3d` yet.
 
 A box selection is matched against the tracks of the frame closest to its time stamp (the service keeps the last 5 s),
 so a box found by Florence-2 a few seconds earlier still picks the right track; `sam2` starts on that old frame and
@@ -523,6 +538,7 @@ Third-party components, used but not included here (each keeps its own license):
 | [YOLOv5](https://github.com/ultralytics/yolov5) | AGPL-3.0 | upstream submodule; YOLOv5l weights and (for `.pt`) its code, loaded by the detector service |
 | [RF-DETR](https://github.com/roboflow/rf-detr) | Apache-2.0 | optional detector; weights exported by `detector/get_models.sh` |
 | [BoxMOT](https://github.com/mikel-brostrom/boxmot) (BoT-SORT, OSNet) | AGPL-3.0 | optional trackers, only in an image built with `WITH_TRACKERS=1` |
+| [Ultralytics](https://github.com/ultralytics/ultralytics) (YOLOE) | AGPL-3.0 | optional detector, only in an image built with `WITH_YOLOE=1`; weights downloaded separately |
 | [SAM 2](https://github.com/facebookresearch/sam2) | Apache-2.0 | optional tracker, only in an image built with `WITH_TRACKERS=1`; checkpoint downloaded separately |
 | [NeuPAN](https://github.com/hanruihua/NeuPAN) | GPL-3.0 | part of ONS2 |
 | [odin_ros_driver](https://github.com/manifoldsdk/odin_ros_driver) | Apache-2.0 | upstream submodule; built in `Dockerfile.driver` |
