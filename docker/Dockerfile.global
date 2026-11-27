@@ -26,7 +26,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # -----------------------------------------------------------------------------
 # 1. System dependencies (matches README §2)
 # -----------------------------------------------------------------------------
+# The ROS apt signing key inside the base image has expired; refresh it first (same step as the working image).
+RUN apt-get update -o Acquire::AllowInsecureRepositories=true \
+    && apt-get install -y --no-install-recommends curl gnupg ca-certificates \
+    && curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add - \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        -o Dpkg::Options::="--force-overwrite" \
         build-essential \
         cmake \
         git \
@@ -36,7 +43,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         sudo \
         libpcl-dev \
         libeigen3-dev \
-        libopencv-dev \
+        libusb-1.0-0-dev \
+        libyaml-cpp-dev \
+        usbutils \
+        ros-${ROS_DISTRO}-map-server \
+        ros-${ROS_DISTRO}-pointcloud-to-laserscan \
         ros-${ROS_DISTRO}-tf2-ros \
         ros-${ROS_DISTRO}-tf2-geometry-msgs \
         ros-${ROS_DISTRO}-cv-bridge \
@@ -55,6 +66,8 @@ RUN wget --quiet -O /tmp/miniforge.sh \
     && rm /tmp/miniforge.sh \
     && conda create -n neupan -y python=3.10 \
     && conda clean -afy
+# conda's libffi for the system libs (same step as the working image)
+RUN ln -sf /opt/conda/lib/libffi.so.8 /usr/lib/aarch64-linux-gnu/libffi.so.8 && ldconfig
 
 # -----------------------------------------------------------------------------
 # 3. Copy source and install NeuPAN deps
