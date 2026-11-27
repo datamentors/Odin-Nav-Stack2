@@ -1,0 +1,43 @@
+# Used instead of the root .dockerignore when building go2_agx/agx/docker/Dockerfile.yolo (BuildKit picks <Dockerfile>.dockerignore).
+# Same as the root one, but yolov5/ and ros_ws/src/yolo_ros/ are needed by this image.
+# Build artefacts (catkin)
+ros_ws/build/
+ros_ws/devel/
+ros_ws/install/
+ros_ws/logs/
+
+# Python build artefacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.egg-info/
+**/.pytest_cache/
+
+# Workspaces / venvs / conda envs
+ros_ws/venvs/
+NeuPAN/venv/
+.venv/
+
+# Bag files / logs / huge data
+**/*.bag
+**/*.bag.active
+**/*.pcd
+**/*.png
+**/*.jpg
+**/*.tiff
+bags/
+logs/
+*.log
+
+# Editor / OS junk
+.git/
+.gitignore
+.gitmodules
+.DS_Store
+.vscode/
+.idea/
+.windsurf/
+
+# Internal docs that should not bloat the image
+dev_docs/
+任务清单.md

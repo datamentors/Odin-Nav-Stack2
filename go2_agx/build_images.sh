@@ -31,7 +31,7 @@ step "3/5 odin-drv:0144  (Odin1 driver only)"
 have odin-drv:0144 && echo "exists, skipped" || docker build -f go2_agx/agx/docker/Dockerfile.driver -t odin-drv:0144 .
 
 step "4/5 odin-yolo:0144  (the image of the container odin-agx)"
-have odin-yolo:0144 && echo "exists, skipped" || docker build -f go2_agx/agx/docker/Dockerfile.yolo -t odin-yolo:0144 .
+have odin-yolo:0144 && echo "exists, skipped" || docker build -f go2_agx/agx/docker/Dockerfile.yolo --build-arg DRV_IMAGE=odin-drv:0144 -t odin-yolo:0144 .
 
 step "5/5 odin-gpu:go2  (CUDA/TensorRT + Odin-perception venv + Florence-2 model, all inside)"
 have odin-gpu:go2 && echo "exists, skipped" || docker build -f go2_agx/agx/docker/Dockerfile.gpu -t odin-gpu:go2 .

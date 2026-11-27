@@ -4,8 +4,10 @@
 # node and the Florence-2 frame server and relay as processes. odin-drv:0144 is only its build base.
 # Build from the REPOSITORY ROOT (needs the yolov5 submodule):
 #   git submodule update --init yolov5
-#   docker build -f go2_agx/agx/docker/Dockerfile.yolo -t odin-yolo:0144 .
-FROM odin-drv:0144
+#   docker build -f go2_agx/agx/docker/Dockerfile.yolo -t odin-yolo:0144 .      (--build-arg DRV_IMAGE=<tag> for another driver image;
+#   Dockerfile.yolo.dockerignore next to this file replaces the root .dockerignore, which drops yolov5 and yolo_ros)
+ARG DRV_IMAGE=odin-drv:0144
+FROM ${DRV_IMAGE}
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       python3-pip ros-noetic-vision-msgs ros-noetic-tf2-ros ros-noetic-tf2-geometry-msgs python3-opencv \
     && rm -rf /var/lib/apt/lists/*
