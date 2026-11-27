@@ -33,7 +33,7 @@ have odin-drv:0144 && echo "exists, skipped" || docker build -f go2_agx/agx/dock
 step "4/5 odin-yolo:0144  (the image of the container odin-agx)"
 have odin-yolo:0144 && echo "exists, skipped" || docker build -f go2_agx/agx/docker/Dockerfile.yolo -t odin-yolo:0144 .
 
-step "5/5 odin-gpu:go2  (YOLO + Florence-2 on the GPU)"
-have odin-gpu:go2 && echo "exists, skipped" || docker build -t odin-gpu:go2 - < go2_agx/agx/docker/Dockerfile.gpu
+step "5/5 odin-gpu:go2  (CUDA/TensorRT + Odin-perception venv + Florence-2 model, all inside)"
+have odin-gpu:go2 && echo "exists, skipped" || docker build -f go2_agx/agx/docker/Dockerfile.gpu -t odin-gpu:go2 .
 
 echo; docker images --format '{{.Repository}}:{{.Tag}}  {{.Size}}' | grep -E "^(odin-nav:drv0144|ons2:go2|odin-drv:0144|odin-yolo:0144|odin-gpu:go2)"

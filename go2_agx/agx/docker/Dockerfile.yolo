@@ -20,4 +20,12 @@ RUN bash -c "source /opt/ros/noetic/setup.bash && cd /opt/odin/ros_ws && \
  && chmod +x /opt/odin/ros_ws/src/yolo_ros/scripts/*.py
 # The system numpy 1.17 shadows the one pandas/ultralytics need; libgomp static TLS error on Jetson
 RUN pip3 install --no-cache-dir "numpy==1.24.4"
+# Odin-perception code (pinned commit + our patch) for the Florence-2 frame server: it used to be mounted from the host
+ARG ODIN_PERCEPTION_COMMIT=9bc24a030fb2f6936c904a095e482b717fcf987d
+RUN apt-get update && apt-get install -y --no-install-recommends git patch ca-certificates && rm -rf /var/lib/apt/lists/* \
+ && git clone https://github.com/ManifoldTechLtd/Odin-perception.git /opt/odin-perception \
+ && git -C /opt/odin-perception checkout $ODIN_PERCEPTION_COMMIT
+COPY go2_agx/patches/odin-perception-annotation-boxes.patch /tmp/perc.patch
+RUN git -C /opt/odin-perception apply /tmp/perc.patch
+LABEL odin.perception=baked
 ENV LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1

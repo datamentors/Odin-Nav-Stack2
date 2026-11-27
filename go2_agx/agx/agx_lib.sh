@@ -29,15 +29,20 @@ agx_ensure() {
   fi
   docker rm -f $AGX_CTR $AGX_LEGACY_CTRS >/dev/null 2>&1
   mkdir -p $AGX_LOGS
+  # the Odin-perception code is inside the image (label odin.perception=baked); only an older image needs the host folder
+  PERC_MOUNT=''; perc_baked $AGX_IMAGE || PERC_MOUNT="-v $HOME/odin-perception:/opt/odin-perception"
   docker run -d --init --name $AGX_CTR --network host --privileged -v /dev/bus/usb:/dev/bus/usb $1 -e PYTHONUNBUFFERED=1 \
     -v $AGX_CONFIG:/opt/odin/ros_ws/src/odin_ros_driver/config/control_command.yaml:ro \
     -v $D/maps/relocalization:/opt/odin/maps/relocalization:ro \
-    -v $HOME/odin-perception:/opt/odin-perception \
+    $PERC_MOUNT \
     -v $AGX_LOGS:/var/log/odin \
     --entrypoint sleep $AGX_IMAGE infinity >/dev/null || return 1
   # /calib.yaml: the driver writes the Odin1 calibration here; depth, YOLO and the Florence relay read it
   docker exec $AGX_CTR bash -c "mkdir -p /run/odin; ln -sf /root/.ros/odin_ros_driver/calib.yaml /calib.yaml"
 }
+
+# perc_baked IMAGE: true when the image already contains Odin-perception (no host folder needed)
+perc_baked() { [ "$(docker image inspect -f '{{index .Config.Labels "odin.perception"}}' "$1" 2>/dev/null)" = baked ]; }
 
 agx_cp() { docker cp "$1" $AGX_CTR:"$2"; }   # copy a script in (the container keeps its own copy, started later)
 
@@ -73,8 +78,9 @@ agx_age()    { docker exec $AGX_CTR bash -c 'echo $(( $(date +%s) - $(stat -c %Y
 # ---- optional third container "odin-gpu": the GPU model services (YOLOv5l TensorRT/PyTorch on :8750, Florence-2 on :8740) ----
 # Used when the image odin-gpu:go2 exists on this machine (Go2: docker build -f docker/Dockerfile.gpu); otherwise the services
 # run on the host as before (AGX Orin: venv in ~/odin-perception). Force with GPU_MODE=container|host.
-# The container has its own CUDA / cuDNN / TensorRT (JetPack image); the venv, the models, the TensorRT engine and the
-# service code are mounted from the host at the same paths. Host network: 127.0.0.1:8750 / :8740 do not change.
+# The container has its own CUDA / cuDNN / TensorRT (JetPack image) and, when the image has the label odin.perception=baked,
+# the venv + Odin-perception + Florence-2 model (/opt/odin-perception); the YOLO weights/engine and the service scripts are
+# mounted from the host at the same paths (an older image without the label also gets ~/odin-perception mounted). Host network: 127.0.0.1:8750 / :8740 do not change.
 # Processes inside (names yolosvc, florence): /run/odin-gpu/NAME.pid + NAME.on; logs on the host: $D/logs/gpu/NAME.log
 GPU_CTR=${GPU_CTR:-odin-gpu}
 GPU_IMAGE=${GPU_IMAGE:-odin-gpu:go2}
@@ -82,15 +88,18 @@ GPU_LOGS=$D/logs/gpu
 gpu_in_container() {
   case "${GPU_MODE:-auto}" in container) return 0 ;; host) return 1 ;; *) docker image inspect $GPU_IMAGE >/dev/null 2>&1 ;; esac
 }
+# gpu_perc: where the Odin-perception folder (venv, code, Florence-2 model) is as seen by the GPU services
+gpu_perc() { if gpu_in_container && perc_baked $GPU_IMAGE; then echo /opt/odin-perception; else echo $HOME/odin-perception; fi; }
 gpu_running() { [ "$(docker inspect -f '{{.State.Running}}' $GPU_CTR 2>/dev/null)" = true ]; }
 gpu_log() { echo $GPU_LOGS/$1.log; }
 gpu_ensure() {
   gpu_running && return 0
   docker rm -f $GPU_CTR >/dev/null 2>&1
   mkdir -p $GPU_LOGS $HOME/perception_test
+  GPU_PERC_MOUNT=''; perc_baked $GPU_IMAGE || GPU_PERC_MOUNT="-v $HOME/odin-perception:$HOME/odin-perception"
   docker run -d --init --name $GPU_CTR --network host --runtime nvidia \
     -e HOME=$HOME -e PYTHONUNBUFFERED=1 -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all \
-    -v $HOME/odin-perception:$HOME/odin-perception -v $D:$D -v $HOME/perception_test:$HOME/perception_test \
+    $GPU_PERC_MOUNT -v $D:$D -v $HOME/perception_test:$HOME/perception_test \
     --entrypoint sleep $GPU_IMAGE infinity >/dev/null || return 1
   docker exec $GPU_CTR mkdir -p /run/odin-gpu
 }

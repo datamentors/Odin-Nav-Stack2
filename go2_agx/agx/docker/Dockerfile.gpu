@@ -1,13 +1,30 @@
-# GO2 (or AGX) JETSON. Third container "odin-gpu": runs the GPU model services (YOLOv5l TensorRT/PyTorch on 127.0.0.1:8750 and
-# Florence-2 on 127.0.0.1:8740) instead of running them on the host. Optional: without this image the scripts use the host venv.
-#   docker build -t odin-gpu:go2 - < Dockerfile.gpu        (no build context needed; run it where this file is, e.g. from the repo)
-# Base: the NVIDIA JetPack 6.1 image (CUDA 12.6, cuDNN 9, TensorRT 10.3, Python 3.10, Ubuntu 22.04), compatible with a JetPack 6.x host
-# (the Go2 runs L4T R36.4.4). The Docker runtime "nvidia" gives it the GPU. Only libopenblas0 is installed on top: the venv with PyTorch and
-# Florence-2 (~/odin-perception), the service code, the YOLO weights and the TensorRT engine (~/odin_test) are mounted from the host at the
-# same paths by agx_lib.sh. A TensorRT engine only loads with the TensorRT version it was built with: if the container's version differs
-# from the one that built yolov5l_fp16.engine, rebuild the engine inside the container (README, TensorRT engine).
+# Image odin-gpu:go2 - the GPU model services of the Go2 stack, everything inside (nothing to copy from the host):
+#   CUDA 12.6 / cuDNN 9 / TensorRT 10.3 (NVIDIA JetPack image) + Python 3.10 virtualenv with torch 2.8 (Jetson wheel),
+#   the Odin-perception code (pinned commit + our patch) and the Florence-2 model (pinned revision, downloaded at build time).
+# Only the YOLO weights/engine (built per device) and the service scripts still come from the host (~/odin_test, mounted).
+# Build from the REPOSITORY ROOT (needs the patch and the requirements file; internet for the model and the wheels):
+#   docker build -f go2_agx/agx/docker/Dockerfile.gpu -t odin-gpu:go2 .
+# JetPack 6 hosts need no CUDA packages for this: the nvidia runtime only supplies the driver, the rest is here.
 FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
-# libopenblas0: the Jetson PyTorch wheel in the venv needs it and the base image does not have it
-RUN apt-get update && apt-get install -y --no-install-recommends libopenblas0 && rm -rf /var/lib/apt/lists/*
-ENV PYTHONUNBUFFERED=1 NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=all
-CMD ["sleep", "infinity"]
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libopenblas0 git patch ca-certificates curl xz-utils python3-venv python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+# cuSPARSELt: torch 2.8 needs it and the JetPack image does not ship it
+RUN curl -fsSL https://developer.download.nvidia.com/compute/cusparselt/redist/libcusparse_lt/linux-aarch64/libcusparse_lt-linux-aarch64-0.6.3.2-archive.tar.xz \
+      | tar -xJ -C /tmp \
+ && cp -a /tmp/libcusparse_lt-linux-aarch64-0.6.3.2-archive/lib/libcusparseLt* /usr/lib/aarch64-linux-gnu/ \
+ && ldconfig && rm -rf /tmp/libcusparse_lt-*
+ARG ODIN_PERCEPTION_COMMIT=9bc24a030fb2f6936c904a095e482b717fcf987d
+ARG FLORENCE_REVISION=f6c1a25888ffc1d945ee8a1a77ac833c7303d46e
+RUN git clone https://github.com/ManifoldTechLtd/Odin-perception.git /opt/odin-perception \
+ && git -C /opt/odin-perception checkout $ODIN_PERCEPTION_COMMIT
+COPY go2_agx/patches/odin-perception-annotation-boxes.patch /tmp/perc.patch
+RUN git -C /opt/odin-perception apply /tmp/perc.patch
+COPY go2_agx/agx/docker/perception-requirements.txt /tmp/perception-requirements.txt
+RUN python3 -m venv /opt/odin-perception/.venv \
+ && /opt/odin-perception/.venv/bin/pip install --no-cache-dir -r /tmp/perception-requirements.txt
+RUN /opt/odin-perception/.venv/bin/python -c "from huggingface_hub import snapshot_download; \
+snapshot_download(repo_id='microsoft/Florence-2-base-ft', revision='$FLORENCE_REVISION', local_dir='/opt/odin-perception/models/florence2-base-ft')"
+ENV PYTHONUNBUFFERED=1 NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=all HF_HUB_OFFLINE=1 ODIN_PERCEPTION=/opt/odin-perception
+LABEL odin.perception=baked
+CMD ["sleep","infinity"]

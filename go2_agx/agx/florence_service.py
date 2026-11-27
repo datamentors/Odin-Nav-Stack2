@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import numpy as np
 from PIL import Image, ImageDraw
 
-REPO = os.path.expanduser("~/odin-perception")
+REPO = os.environ.get("ODIN_PERCEPTION") or os.path.expanduser("~/odin-perception")   # the odin-gpu image sets it to /opt/odin-perception
 sys.path.insert(0, REPO)
 os.chdir(REPO)
 from inspection_perception.cli import make_frame_source, make_backend, InspectionPipeline, load_check_items  # noqa

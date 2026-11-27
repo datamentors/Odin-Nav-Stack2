@@ -25,7 +25,7 @@ svc_up() { if gpu_in_container; then gpu_alive yolosvc; else pgrep -f "$SVC_PAT"
 svc_stop
 start_svc() {   # $1 folder  $2 script. Fully detached (own session, no fd shared with this script) so this script can always exit
   if gpu_in_container; then
-    gpu_start yolosvc "cd $1 && exec env YOLO_GPU_PORT=8750 PIP_NO_INDEX=1 $HOME/odin-perception/.venv/bin/python $1/$2" || return 1
+    gpu_start yolosvc "cd $1 && exec env YOLO_GPU_PORT=8750 PIP_NO_INDEX=1 $(gpu_perc)/.venv/bin/python $1/$2" || return 1
   else
     (cd $1 && exec env YOLO_GPU_PORT=8750 PIP_NO_INDEX=1 setsid $HOME/odin-perception/.venv/bin/python $1/$2 > $SVC_LOG 2>&1 < /dev/null) &
     disown; sleep 2; pgrep -f "$SVC_PAT" | head -1 > $G/service.pid

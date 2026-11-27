@@ -16,7 +16,7 @@ mkdir -p $HOME/perception_test
 if gpu_in_container; then
   gpu_ensure || { echo "Container $GPU_CTR failed to start"; exit 1; }
   pkill -u $(id -u) -f "[f]lorence_service.py" 2>/dev/null; sleep 1   # a copy left on the host would keep the port (the container runs as root: not matched)
-  FLOG=$(gpu_log florence); gpu_start florence "exec $HOME/odin-perception/.venv/bin/python $HOME/odin_test/florence_service.py" || { echo "Florence-2 service did not start: tail $FLOG"; exit 1; }
+  FLOG=$(gpu_log florence); gpu_start florence "exec env ODIN_PERCEPTION=$(gpu_perc) $(gpu_perc)/.venv/bin/python $HOME/odin_test/florence_service.py" || { echo "Florence-2 service did not start: tail $FLOG"; exit 1; }
 else
   FLOG=$HOME/perception_test/florence_service.log
   pkill -f "[f]lorence_service.py" 2>/dev/null; sleep 1
