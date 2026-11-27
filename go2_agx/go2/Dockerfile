@@ -28,3 +28,5 @@ RUN /opt/conda/envs/neupan/bin/pip install --no-cache-dir requests
 # Constraints keep the working torch 2.1.0 / numpy<2 (pip would otherwise replace them).
 RUN printf "torch==2.1.0\nnumpy<2\n" > /tmp/c.txt && /opt/conda/envs/neupan/bin/pip install --no-cache-dir -c /tmp/c.txt \
       "opencv-python-headless<4.11" "torchvision==0.16.0" pandas seaborn tqdm psutil thop gitpython "ultralytics==8.3.40" "setuptools<70"
+# Same versions as the first working image (a rebuild had pulled scs 3.3.2 and lacked netifaces). Last on purpose: cheap to change.
+RUN /opt/conda/envs/neupan/bin/pip install --no-cache-dir "scs==3.2.11" "netifaces==0.11.0"
