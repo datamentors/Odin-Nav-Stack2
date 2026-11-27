@@ -6,10 +6,10 @@
 #   Console:  docker exec -it ons2-go2 tmux attach -t ons2_go2      (Ctrl+b then n/p = next/prev window, Ctrl+b d = leave)
 # --with-bridge : THEIR Go2 bridge (unitree_control): the robot STANDS UP at start and walks on /cmd_vel. Remote in hand!
 # --with-yolo   : THEIR yolo_ros (yolo_detection.launch) in tmux window "yolo" (needs ~/odin_test/start_depth_agx.sh on the AGX)
-# --with-cloud : OUR cloud_publisher in tmux window "cloud" (JSON for the cloud side on /cloud_gateway/{telemetry,status,events}; starts the
-#                ROS 1 -> ROS 2 bridge odin-bridge if it is not running). The cloud side itself is in ardia-robotics. No motion command.
 # --with-yolo-agx : same, but the DETECTOR runs on the AGX GPU (YOLOv5l, ~60 ms/image; needs ~/odin_test/start_yolo_gpu_agx.sh
 #                   on the AGX); here only tf_relay + object_query + our yolo_cmd_bridge. Recommended (16 Nov).
+# --with-cloud : OUR cloud_publisher in tmux window "cloud" (JSON for the cloud side on /cloud_gateway/{telemetry,status,events}; starts the
+#                ROS 1 -> ROS 2 bridge odin-bridge if it is not running). The cloud side itself is in ardia-robotics. No motion command.
 CONF="${GO2_AGX_CONF:-$HOME/.config/go2_agx/network.env}"; [ -f "$CONF" ] && . "$CONF"   # see go2_agx/network.env.example
 : "${GO2_IP:?set GO2_IP (Go2 wired address, runs the ROS master) in $CONF}"
 BRIDGE=0; YOLO=0; CLOUD=0; ARGS=()

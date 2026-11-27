@@ -85,6 +85,11 @@ do_check() {
   chk "the relocalization map named in control_command_agx.yaml exists on $WHO_AGX" a 'f=$(grep -o "maps/relocalization/[^\"]*" ~/odin_test/control_command_agx.yaml | head -1); [ -n "$f" ] && test -f ~/odin_test/$f'
   chk "odin-agx scripts are the single-container version" a 'test -f ~/odin_test/agx_lib.sh && grep -q "same" ~/odin_test/start_odin_agx.sh'
   chk "Go2 scripts are the single-container version" g 'grep -q "process master" ~/odin_nav_stack/drv0144/start_odin_remote.sh && grep -q ons2_stop ~/ons2_docker/ons2_start.sh'
+  if [ "$CLOUD" = 1 ]; then
+    chk "cloud_publisher deployed (~/ons2/go2_agx/cloud, launcher and ons2_start.sh know --with-cloud; else install.sh --ons2)" \
+      g 'test -f ~/ons2/go2_agx/cloud/cloud_publisher.py && grep -q ONS2_CLOUD ~/ons2/scripts/ons2_go2_agx.sh && grep -q -- --with-cloud ~/ons2_docker/ons2_start.sh'
+    chk "ROS 1 -> ROS 2 bridge: image ros1_bridge:go2 and start_bridge.sh" g 'docker image inspect ros1_bridge:go2 && test -x ~/odin_nav_stack/drv0144/start_bridge.sh'
+  fi
   summary
 }
 

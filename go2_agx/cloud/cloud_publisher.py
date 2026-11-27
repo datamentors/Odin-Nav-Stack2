@@ -161,6 +161,8 @@ class CloudPublisher:
         self.seen("yolo")
         now = time.time()
         self.yolo_stamps = [s for s in self.yolo_stamps if now - s < 5.0] + [now]
+        if self.cfg["rates_hz"]["yolo_max"] <= 0:
+            return  # YOLO messages turned off in the config (the rate above still feeds the stack health)
         objects = []
         tf_cam = self.cam_to_map_tf()
         for d in m.detections[: self.cfg["max_objects"]]:

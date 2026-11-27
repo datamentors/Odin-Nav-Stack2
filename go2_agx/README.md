@@ -310,10 +310,10 @@ instead of running them on the host. The ROS side stays in `odin-agx` (`yolo`, `
 
 ### Test script
 
-`go2_agx/test_stack.sh` (`CLOUD=1` also starts `cloud_publisher` with `--with-cloud` and verifies its messages: envelope, identity, `odin.pose.v1`, `odin.status.v1`) starts and checks everything from a PC with SSH access (`STACK=single` for everything on the Go2,
+`go2_agx/test_stack.sh` starts and checks everything from a PC with SSH access (`STACK=single` for everything on the Go2,
 `STACK=two` for AGX + Go2): `check`, `deploy`, `start`, `verify [--resilience]`, `stop`, `all`. It never starts the chassis
 bridge (so with the bridge running by hand, its safety check fails on purpose). With the image `odin-gpu:go2` on the machine and the GPU path it expects three
-containers (`odin-agx`, `ons2-go2`, `odin-gpu`) and checks their processes; `GPU_MODE=host` forces the host mode. SSH targets and passwords come from the environment (`GO2_SSH`, `GO2_SSHPASS`, ...); see the header of the script. `GO2_SSH=local` runs the whole test on the Go2 itself (no SSH, no password).
+containers (`odin-agx`, `ons2-go2`, `odin-gpu`) and checks their processes; `GPU_MODE=host` forces the host mode. SSH targets and passwords come from the environment (`GO2_SSH`, `GO2_SSHPASS`, ...); see the header of the script. `GO2_SSH=local` runs the whole test on the Go2 itself (no SSH, no password). `CLOUD=1` also starts `cloud_publisher` (`--with-cloud`) and verifies its messages (envelope, identity, `odin.pose.v1`, `odin.status.v1`); see `cloud/README.md`.
 
 ### Go2 container `ons2-go2`
 

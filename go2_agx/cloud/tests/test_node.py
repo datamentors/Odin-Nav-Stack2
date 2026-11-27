@@ -134,6 +134,17 @@ def main():
     n.on_florence(NS(data=json.dumps({"phrase": "table", "seq": None, "objects": [{"n": 1}]})))
     n.on_florence(NS(data="not json"))
 
+    # yolo_max 0 turns the YOLO messages off (a second node with that config)
+    import copy
+    cfg_off = copy.deepcopy(cfg)
+    cfg_off["rates_hz"]["yolo_max"] = 0
+    n_off = cloud_publisher.CloudPublisher(cfg_off)
+    before = len(published)
+    n_off.on_yolo(frame)
+    n_off.last["yolo"] = 0
+    n_off.on_yolo(frame)
+    yolo_off_silent = len(published) == before and len(n_off.yolo_stamps) == 2
+
     # merged status: one message with map, nav and stack
     n.send_status()
     # status_due: dirty and 1 s later -> yes; just sent and not dirty -> no; NAVIGATING -> every 2 s
@@ -204,6 +215,7 @@ def main():
         ("map name from the ROS parameter", all(m["payload"].get("map") == "restaurant_walls" for t, m in published
                                                  if m["payload"]["kind"] == "odin.pose.v1")),
         ("every message has its own id", len(ids) == len(published)),
+        ("yolo_max 0: no YOLO message, rate still counted", yolo_off_silent),
     ]
     for name, ok in checks:
         print("%s  %s" % ("PASS" if ok else "FAIL", name))

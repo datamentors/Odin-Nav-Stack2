@@ -47,4 +47,13 @@ By hand inside ons2-go2 (development): `python3 cloud_publisher.py _config:=conf
 
 ## Status (27 Nov 2026)
 
-Seen on the Go2: pose, YOLO, map, mission state and Florence from the node; the messages with the envelope through the bridge into the cloud gateway (mock broker), and the camera through the bridge at 10 Hz. Not tested: `NAVIGATING`, the events topic through the gateway, anything with real AWS.
+Verified on the Go2 with the Pulse runtime of ardia-robotics (`go2-demo`) connected to AWS IoT (dev, shared identity `unitree-go2-000`):
+`CLOUD=1 test_stack.sh verify` passes; in the AWS IoT MQTT test client `odin.pose.v1`, `odin.detections.yolo.v1`, `odin.status.v1` and
+`odin.detections.florence.v1` arrive and match the schemas, about 0.1 s after the robot stamps them; `odin.status.v1` is retained (AWS
+replays the same message on a new subscription after the runtime stopped); `nav.state` `NAVIGATING` with goal and distance arrives
+during a `go F1` without the chassis bridge (the legs do not move).
+
+`nav.progress_percent` is the mission manager's own value: the share of waypoints reached counting the current one, so a single-goal
+mission reads 100 from the start. Use `distance_to_target_m` for the distance still to go.
+
+Not tested: recovery after a connection loss, CPU / RAM with the camera stream and the whole stack, long runs.
