@@ -73,7 +73,9 @@ RUN /opt/conda/envs/neupan/bin/pip install --no-cache-dir \
 # 4. Build the ROS workspace
 #    Only the nav-relevant packages are copied (no YOLO / VLM / VLN).
 # -----------------------------------------------------------------------------
-COPY ros_ws/src/CMakeLists.txt              /opt/odin/ros_ws/src/CMakeLists.txt
+# CMakeLists.txt in ros_ws/src is a symlink to catkin's toplevel.cmake (dangling in the build context), so create it here
+RUN mkdir -p /opt/odin/ros_ws/src \
+ && ln -sf /opt/ros/${ROS_DISTRO}/share/catkin/cmake/toplevel.cmake /opt/odin/ros_ws/src/CMakeLists.txt
 COPY ros_ws/src/odin_ros_driver             /opt/odin/ros_ws/src/odin_ros_driver
 COPY ros_ws/src/map_planner                 /opt/odin/ros_ws/src/map_planner
 COPY ros_ws/src/sliding_map                 /opt/odin/ros_ws/src/sliding_map
